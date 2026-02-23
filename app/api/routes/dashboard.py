@@ -19,8 +19,6 @@ async def get_daily_summary(
     current_user: dict = Depends(get_current_user)
 ):
     from app.models.historial import ProgresoCalorias
-    
-    
     from app.core.utils import get_peru_date
 
     cliente = db.query(Client).filter(Client.id == cliente_id).first()

@@ -7,6 +7,7 @@ load_dotenv()
 class Settings:
     PROJECT_NAME: str = "CaloFit - Gimnasio World Light"
     DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://postgres:leomeflo09@localhost/BD_Calofit")
+    REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     SECRET_KEY: str = os.getenv("SECRET_KEY", "TU_CLAVE_PARA_LEY_29733")
     ALGORITHM: str = os.getenv("ALGORITHM", "HS256")
     GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")

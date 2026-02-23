@@ -1,6 +1,14 @@
 import re
 from typing import Dict, List, Optional
 
+
+def _sin_asteriscos(texto: str) -> str:
+    """Elimina ** de Markdown para que Flutter no reciba negritas sin renderizar (evita overflow/visual)."""
+    if not texto:
+        return texto
+    return re.sub(r"\*\*", "", str(texto))
+
+
 def parsear_respuesta_para_frontend(texto_principal: str, mensaje_usuario: str = None) -> Dict:
     """
     Motor de parsing ultra-robusto (v11.0 - Protocolo Fallo Cero).
@@ -14,8 +22,30 @@ def parsear_respuesta_para_frontend(texto_principal: str, mensaje_usuario: str =
     }
 
     if not texto_principal: return resultado
+    
+    # --- PRE-PROCESAMIENTO: ESTANDARIZACIÓN DE ETIQUETAS (v15.0) ---
+    # La IA a veces inyecta espacios: [/ CALOFIT_STATS] -> [/CALOFIT_STATS]
+    # O usa minúsculas: [calofit_header] -> [CALOFIT_HEADER]
+    def estandarizar_tags(texto: str) -> str:
+        # Corregir cierres con espacios: [/ CALOFIT_XXX] -> [/CALOFIT_XXX]
+        texto = re.sub(r'\[/\s*CALOFIT_([A-Z_]+)\s*\]', r'[/CALOFIT_\1]', texto, flags=re.IGNORECASE)
+        # Corregir aperturas con espacios: [ CALOFIT_XXX ] -> [CALOFIT_XXX]
+        texto = re.sub(r'\[\s*CALOFIT_([A-Z_]+)(?::\s*.*?)?\s*\]', lambda m: m.group(0).replace(" ", ""), texto, flags=re.IGNORECASE)
+        # Forzar mayúsculas en tags conocidos
+        tags_validos = ["CHAT", "ITEM_RECIPE", "ITEM_WORKOUT", "HEADER", "STATS", "LIST", "ACTION", "FOOTER", "INTENT"]
+        for tag in tags_validos:
+            texto = re.sub(fr'\[/?CALOFIT_{tag}', f'[{tag_part}' if (tag_part := re.search(fr'\[/?CALOFIT_{tag}', texto, re.I)) and tag_part.group().startswith('[/') else f'[CALOFIT_{tag}', texto, flags=re.IGNORECASE)
+        return texto
 
-    # --- FASE 1: DETECCIÓN DE INTENCIÓN (VÍA ETIQUETA) ---
+    # v15.1: Regex más simple para estandarizar tags sin romper intents
+    texto_principal = re.sub(r'\[\s*(/?CALOFIT_[A-Z_]+)(?:\s*:\s*([A-Z_]+))?\s*\]', 
+                             lambda m: f"[{m.group(1).upper().strip()}{': ' + m.group(2).upper().strip() if m.group(2) else ''}]", 
+                             texto_principal, flags=re.IGNORECASE)
+    # Corregir espacios en cierres residuales
+    texto_principal = re.sub(r'\[/\s*(CALOFIT_[A-Z_]+)\s*\]', r'[/\1]', texto_principal, flags=re.IGNORECASE)
+    
+    # 🛡️ FIX v73.0: Eliminar etiquetas de cierre huérfanas o mal formadas al inicio de la respuesta
+    texto_principal = re.sub(r'^\[/CALOFIT_[A-Z_]+\]\s*', '', texto_principal, flags=re.IGNORECASE)
     intent_match = re.search(r'\[CALOFIT_INTENT:\s*(\w+)\]', texto_principal, re.IGNORECASE)
     if intent_match:
         resultado["intent"] = intent_match.group(1).upper()
@@ -99,6 +129,19 @@ def parsear_respuesta_para_frontend(texto_principal: str, mensaje_usuario: str =
                     
                 # Igual para pasos, manteniendo el texto limpio
                 pasos = [re.sub(r'^(\s*[-\*•]\s?|\s*\d+[\.\)]\s?)', '', p).strip() for p in pasos_raw if p.strip()]
+                
+                # 🚀 HEURÍSTICA DE SEGURIDAD (v72.0): Detectar pasos mezclados en ingredientes
+                # Si un ingrediente empieza con verbos de acción, moverlo a pasos
+                verbos_accion = ["sirve", "disfruta", "lleva", "cocina", "mezcla", "hornea", "calienta", "pica", "corta", "agrega", "añade"]
+                ingredientes_originales = items[:]
+                items = []
+                for ing in ingredientes_originales:
+                    ing_low = ing.lower()
+                    if any(ing_low.startswith(v) for v in verbos_accion) and len(ing) > 10:
+                        pasos.append(ing)
+                    else:
+                        items.append(ing)
+
                 # Filtrar líneas que solo digan "preparación:" o similar
                 pasos = [p for p in pasos if not re.match(r'^(preparaci[oó]n|instrucciones|pasos|tecnica)[:\.]?$', p, re.IGNORECASE)]
 
@@ -120,21 +163,37 @@ def parsear_respuesta_para_frontend(texto_principal: str, mensaje_usuario: str =
                 msg_stats_clean = re.sub(r'Calor\w*', 'Cal', msg_stats_clean, flags=re.IGNORECASE)
 
                 nombre_raw = header.group(1).strip() if header else "Sugerencia CaloFit"
-                nombre_clean = re.sub(r'^(Opción|Option|Plato|Rutina)\s*\d+[:\.]?\s*', '', nombre_raw, flags=re.IGNORECASE).strip()
+                nombre_clean = re.sub(r'^(Opci[oó]n|Option|Plato|Platillo|Rutina|Receta)\s*\d+[:\.]?\s*', '', nombre_raw, flags=re.IGNORECASE).strip()
+                # Flutter: sin ** para evitar asteriscos sin renderizar
+                nombre_clean = _sin_asteriscos(nombre_clean)
+                items_clean = [_sin_asteriscos(i) for i in items]
+                pasos_clean = [_sin_asteriscos(p) for p in pasos]
+                msg_stats_clean = _sin_asteriscos(msg_stats_clean)
 
                 seccion = {
                     "tipo": tipo,
                     "nombre": nombre_clean,
                     "justificacion": "",
-                    "ingredientes": items if tipo == "comida" else [],
-                    "ejercicios": items if tipo == "ejercicio" else [],
-                    "preparacion": pasos if tipo == "comida" else [],
-                    "tecnica": pasos if tipo == "ejercicio" else [],
-                    "instrucciones": pasos if tipo == "ejercicio" else [],
+                    "ingredientes": items_clean if tipo == "comida" else [],
+                    "ejercicios": items_clean if tipo == "ejercicio" else [],
+                    "preparacion": pasos_clean if tipo == "comida" else [],
+                    "tecnica": pasos_clean if tipo == "ejercicio" else [],
+                    "instrucciones": pasos_clean if tipo == "ejercicio" else [],
                     "macros": msg_stats_clean if tipo == "comida" else "",
                     "gasto_calorico_estimado": msg_stats_clean if tipo == "ejercicio" else "",
                     "nota": footer.group(1).strip() if footer else ""
                 }
+                
+                # 🛡️ LIMPIEZA QUIRÚRGICA DE CAMPOS (v73.1): Eliminar tags que se colaron en los valores
+                for campo in ["nombre", "macros", "gasto_calorico_estimado", "nota"]:
+                    val = seccion.get(campo, "")
+                    if isinstance(val, str):
+                        seccion[campo] = re.sub(r'\[/?CALOFIT_[A-Z_]+.*?\]', '', val, flags=re.IGNORECASE).strip()
+                
+                for lista_campo in ["ingredientes", "ejercicios", "preparacion", "tecnica", "instrucciones"]:
+                    lista_val = seccion.get(lista_campo, [])
+                    if isinstance(lista_val, list):
+                        seccion[lista_campo] = [re.sub(r'\[/?CALOFIT_[A-Z_]+.*?\]', '', item, flags=re.IGNORECASE).strip() for item in lista_val if item.strip()]
                 
                 # De-duplicación y guardado
                 if not any(s["nombre"] == seccion["nombre"] for s in resultado["secciones"]):
@@ -152,10 +211,15 @@ def parsear_respuesta_para_frontend(texto_principal: str, mensaje_usuario: str =
             tag = bloques_raw[k]
             content = bloques_raw[k+1] if (k+1) < len(bloques_raw) else ""
             
-            # Si el tag es INTENT, el contenido es conversación.
-            # Si el tag es HEADER, el contenido es una Card y NO debe ir al chat.
-            if "INTENT" in tag.upper():
+            # 🛡️ FIX v72.1: Solo meter al chat el contenido de [CALOFIT_INTENT: CHAT]
+            # Ignorar ITEM_RECIPE, ITEM_WORKOUT y tags de HEADER, ya que van a Cards.
+            if "[CALOFIT_INTENT: CHAT]" in tag.upper():
                 texto_limpio_parts.append(content)
+            elif "[CALOFIT_INTENT" not in tag.upper() and "[CALOFIT_HEADER]" not in tag.upper():
+                # Si es un bloque de texto que quedó fuera de los tags por error de la IA, lo incluimos
+                # pero limpiamos cualquier tag residual
+                texto_sucio = re.sub(r'\[/?CALOFIT_[A-Z_]+.*?\]', '', content, flags=re.IGNORECASE)
+                texto_limpio_parts.append(texto_sucio)
             
             k += 2
             
@@ -186,16 +250,27 @@ def parsear_respuesta_para_frontend(texto_principal: str, mensaje_usuario: str =
         texto_limpio = re.sub(r'\n\s*\n\s*\n+', '\n\n', texto_limpio)
         texto_limpio = re.sub(r'  +', ' ', texto_limpio)
         
-        resultado["texto_conversacional"] = texto_limpio.strip()
+        # Flutter: eliminar
+        # 🛡️ LIMPIEZA FINAL DE CUALQUIER TAG RESIDUAl [/CALOFIT_...]
+        texto_limpio = re.sub(r'\[/?CALOFIT_[A-Z_]+.*?\]', '', texto_limpio, flags=re.IGNORECASE)
+        resultado["texto_conversacional"] = _sin_asteriscos(texto_limpio.strip())
         return resultado
 
     # --- FASE 3: FALLBACK A PARSER ELÁSTICO (Formato Antiguo) ---
-    # (Mantener compatibilidad con respuestas que no sigan el nuevo protocolo)
+    # v71.1: Mejorado para detectar patrones naturales como "Opción 1: Sopa de Lentejas"
     t = texto_principal.replace('***', '').strip()
     lineas = [l.strip() for l in t.split('\n') if l.strip()]
     
-    start_markers = ["plato:", "rutina:", "receta:", "nombre:", "ejercicio:", "comida:"]
-    field_markers = ["justificacion:", "ingredientes:", "ejercicios:", "preparacion:", "tecnica:", "pasos:", "aporte:", "stats:", "nota:"]
+    # Patrones de inicio de sección EXPANDIDOS para detectar formato natural de la IA
+    # Detecta: "plato: X", "Opción 1: X", "**Opción 1: X**", "1. X", "Receta 1: X"
+    opcion_pattern = re.compile(
+        r'^(?:\*{0,2})?(?:Opci[oó]n|Receta|Rutina|Plato|Opcion|Ejercicio)\s*\d*[:\.\)]\s*(.+?)(?:\*{0,2})?$',
+        re.IGNORECASE
+    )
+    # También detectar líneas en negritas que son títulos cortos (posibles nombres de platos)
+    titulo_bold_pattern = re.compile(r'^\*\*(.{5,60})\*\*$')
+    
+    old_start_markers = ["plato:", "rutina:", "receta:", "nombre:", "ejercicio:", "comida:"]
     
     current_section = None
     last_key = None
@@ -203,43 +278,112 @@ def parsear_respuesta_para_frontend(texto_principal: str, mensaje_usuario: str =
 
     for l in lineas:
         l_low = l.lower()
-        is_start = any(l_low.startswith(m) for m in start_markers)
+        l_clean = re.sub(r'\*\*', '', l).strip()
         
-        if is_start:
-            if current_section: resultado["secciones"].append(current_section)
-            tipo = "ejercicio" if "rutina" in l_low or "ejercicio" in l_low else "comida"
-            nombre = l.split(':', 1)[1].strip() if ':' in l else l
-            current_section = {"tipo": tipo, "nombre": nombre, "justificacion": "", "ingredientes": [], "preparacion": [], "macros": "", "nota": ""}
+        # Detectar inicio de sección: marcadores clásicos O "Opción N:"
+        is_classic_start = any(l_low.startswith(m) for m in old_start_markers)
+        opcion_match = opcion_pattern.match(l_clean)
+        titulo_bold_match = titulo_bold_pattern.match(l) if not current_section else None
+        
+        # Decidir inicio según match
+        new_section_nombre = None
+        new_section_tipo = "comida"
+        
+        if is_classic_start:
+            new_section_nombre = l.split(':', 1)[1].strip() if ':' in l else l_clean
+            new_section_tipo = "ejercicio" if "rutina" in l_low or "ejercicio" in l_low else "comida"
+        elif opcion_match:
+            new_section_nombre = opcion_match.group(1).strip().strip('*').strip()
+            new_section_tipo = "ejercicio" if any(k in l_low for k in ["rutina", "ejercicio", "entrenamiento"]) else "comida"
+        
+        if new_section_nombre:
+            if current_section and current_section.get("ingredientes"):
+                resultado["secciones"].append(current_section)
+            current_section = {
+                "tipo": new_section_tipo, 
+                "nombre": _sin_asteriscos(new_section_nombre), 
+                "justificacion": "", 
+                "ingredientes": [], 
+                "preparacion": [], 
+                "macros": "", 
+                "nota": ""
+            }
             last_key = "nombre"
+            # Esta línea es un header, va al texto conversacional NO a la card
+            # (solo si hay secciones ya o es una opción múltiple)
             continue
 
         if not current_section:
-            intro_lines.append(l)
-            continue
+            # AUTO-RESCATE (v71.6): Si la IA saltó directamente a los ingredientes (bullet points) sin poner un título
+            if re.match(r'^[-\*•]\s+', l) and ('g' in l_low or 'cda' in l_low or 'taza' in l_low):
+                current_section = {
+                    "tipo": "comida", 
+                    "nombre": f"Sugerencia {len(resultado['secciones']) + 1}", 
+                    "justificacion": "", 
+                    "ingredientes": [], 
+                    "preparacion": [], 
+                    "macros": "", 
+                    "nota": ""
+                }
+                # Seguimos procesando esta línea como si fuera un ingrediente
+            elif re.match(r'^\d+[\.\)]\s+', l) and ('precalienta' in l_low or 'mezcla' in l_low or 'hornea' in l_low):
+                 current_section = {
+                    "tipo": "comida", 
+                    "nombre": f"Sugerencia {len(resultado['secciones']) + 1}", 
+                    "justificacion": "", 
+                    "ingredientes": [], 
+                    "preparacion": [], 
+                    "macros": "", 
+                    "nota": ""
+                }
+            else:
+                intro_lines.append(l)
+                continue
 
         # Procesar campos dentro de sección
-        if "justificacion" in l_low: last_key = "justificacion"
-        elif "ingredientes" in l_low or "ejercicios" in l_low: last_key = "ingredientes"
-        elif "preparacion" in l_low or "tecnica" in l_low or "pasos" in l_low: last_key = "preparacion"
-        elif "aporte" in l_low or "macros" in l_low or "calorias" in l_low: last_key = "macros"
-        elif "nota" in l_low or "recuerda" in l_low: last_key = "nota"
+        if "ingredientes" in l_low or "componentes" in l_low: 
+            last_key = "ingredientes"
+        elif "preparaci" in l_low or "elaboraci" in l_low or "c\u00f3mo preparar" in l_low or "pasos" in l_low:
+            last_key = "preparacion"
+        elif "macros" in l_low or "aporte" in l_low or "calorias" in l_low or "kcal" in l_low.replace(' ', '') and ':' in l_low:
+            last_key = "macros"
+            if ':' in l:
+                current_section["macros"] = l.split(':', 1)[1].strip()
+        elif "nota" in l_low or "recuerda" in l_low: 
+            last_key = "nota"
         else:
             if last_key in ["ingredientes", "preparacion"]:
-                item = re.sub(r'^([-\*\+\#•]|\d+[\.\)\s])\s*', '', l).strip()
-                if item: current_section[last_key].append(item)
+                item = re.sub(r'^([-\*\+\#•]|\d+[\.#\)\s])\s*', '', l_clean).strip()
+                if item and not re.match(r'^(ingredientes|ejercicios|preparaci[oó]n|lista)[:\.]?$', item, re.IGNORECASE):
+                    current_section[last_key].append(_sin_asteriscos(item))
+            elif last_key == "macros":
+                current_section["macros"] = (current_section["macros"] + " " + l_clean).strip()
             elif last_key:
-                current_section[last_key] = (current_section[last_key] + " " + l).strip()
+                current_section[last_key] = (current_section.get(last_key, "") + " " + l_clean).strip()
+            # Auto-detectar ingredientes si la línea empieza por bullet y estamos en sección de comida
+            elif re.match(r'^[-\*•]\s+', l) and current_section["tipo"] == "comida":
+                item = re.sub(r'^[-\*•]\s+', '', l).strip()
+                if item:
+                    current_section["ingredientes"].append(_sin_asteriscos(item))
+                    last_key = "ingredientes"
+            # Auto-detectar pasos si empieza por número
+            elif re.match(r'^\d+[\.\)]\s+', l):
+                item = re.sub(r'^\d+[\.\)]\s+', '', l).strip()
+                if item:
+                    current_section["preparacion"].append(_sin_asteriscos(item))
+                    last_key = "preparacion"
 
-    if current_section:
+    if current_section and current_section.get("ingredientes"):
         if current_section["tipo"] == "ejercicio":
             current_section["ejercicios"] = current_section.pop("ingredientes")
             current_section["tecnica"] = current_section.pop("preparacion")
             current_section["gasto_calorico_estimado"] = current_section.pop("macros")
         resultado["secciones"].append(current_section)
 
+    # El texto conversacional solo tiene las líneas de introducción
     texto_limpio = "\n".join(intro_lines).strip()
     
-    # --- FASE 4: FORMATEO VISUAL TAMBIÉN PARA FALLBACK ---
+    # FASE 4: Formateo visual
     texto_limpio = re.sub(r'([:;.])\s*([-\*•]|\d+\.)\s+', r'\1\n\2 ', texto_limpio)
     texto_limpio = re.sub(r'\s+([-\*•])\s+', r'\n\1 ', texto_limpio)
     texto_limpio = re.sub(r'\s+(\d+\.)\s+', r'\n\1 ', texto_limpio) 

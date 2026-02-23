@@ -812,11 +812,11 @@ class IAService:
             )
             response_json = json.loads(response.choices[0].message.content.strip())
             
-            # v69.3: Limpieza profunda de nombres (eliminar ** que la IA a veces inyecta)
+            # v69.3: Limpieza profunda de nombres (eliminar ** y tags accidentales [/CALO...)
             if "alimentos_detectados" in response_json:
-                response_json["alimentos_detectados"] = [a.replace("*", "").strip() for a in response_json["alimentos_detectados"]]
+                response_json["alimentos_detectados"] = [a.split('[')[0].replace("*", "").strip() for a in response_json["alimentos_detectados"]]
             if "ejercicios_detectados" in response_json:
-                response_json["ejercicios_detectados"] = [e.replace("*", "").strip() for e in response_json["ejercicios_detectados"]]
+                response_json["ejercicios_detectados"] = [e.split('[')[0].replace("*", "").strip() for e in response_json["ejercicios_detectados"]]
             
             # 🚀 ENHANCEMENT v2.0: CORRECCIÓN CON DATOS REALES (SQLite/JSON)
             # La IA es buena detectando nombres, pero mala con números exactos de marcas.
@@ -1049,9 +1049,14 @@ USA EL TAG [CALOFIT_INTENT: CHAT] AL INICIO DE TU RESPUESTA.
 - Si el usuario tiene condiciones críticas listadas, SE CAUTELOSO. 
 - NO recetes medicamentos ni sugieras ayunos extremos.
 - Si es un saludo, responde cálidamente.
-- Si es una duda, responde de forma DIRECTA Y CIENTÍFICA.
-- NO uses etiquetas como 'Plato:', 'Rutina:', [CALOFIT_HEADER] o [CALOFIT_STATS].
-Respuestas en texto plano sin formatos complejos.""".replace("{contexto}", contexto).replace("{texto_extra}", texto_extra)
+- Si es una duda médica o general, responde de forma DIRECTA Y CIENTÍFICA en texto plano.
+- ⚠️ IMPORTANTE: SI EL USUARIO PREGUNTA POR LAS CALORÍAS O MACROS DE UN ALIMENTO (ej. "¿Cuántas calorías tiene una manzana?"), DEBES usar OBLIGATORIAMENTE el formato estructurado para que el sistema pueda leer las calorías:
+[CALOFIT_INTENT: ITEM_RECIPE]
+[CALOFIT_HEADER] Nombre del Alimento [/CALOFIT_HEADER]
+[CALOFIT_LIST] Cantidad (ej: 1 unidad mediana) [/CALOFIT_LIST]
+[CALOFIT_STATS] P: Xg | C: Yg | G: Zg | Cal: Wkcal [/CALOFIT_STATS]
+- ⛔ PROHIBIDO: Incluir las calorías, proteínas, grasas o carbohidratos como elementos individuales en la lista [CALOFIT_LIST]. Úsalos SOLO en [CALOFIT_STATS].
+Si no es sobre las calorías de un alimento específico, usa texto plano.""".replace("{contexto}", contexto).replace("{texto_extra}", texto_extra)
         else:
             system_content = """OPERANDO BAJO EL PROTOCOLO 'CALOFIT UNIFIED V3.1' (PROTOCOLO INQUEBRANTABLE).
 ### REGLA DE ORO #0:
@@ -1077,21 +1082,31 @@ Toda respuesta DEBE comenzar con una etiqueta de intención exacta. NO USES OTRA
 
 ### 🚨 PROTOCOLO DE MÚLTIPLES CARTAS (CRÍTICO):
 1. **SI EL USUARIO PIDE "OPCIONES" (Plural):**
-   - GENERA EXACTAMENTE 2 opciones distintas (no más, para ser rápido y preciso).
-   - ⚠️ REGLA DE ORO: CADA OPCIÓN DEBE SER UN BLOQUE INDEPENDIENTE.
+   - GENERA EXACTAMENTE 2 opciones distintas.
+   - ⚠️ REGLA DE ORO: CADA OPCIÓN DEBE SER UN BLOQUE INDEPENDIENTE FUERA DEL CHAT.
    - PRIMERO: Saluda y presenta las opciones con un bloque [CALOFIT_INTENT: CHAT].
-     Ejemplo: [CALOFIT_INTENT: CHAT] ¡Claro Leonardo! Aquí tienes 2 excelentes opciones para tu cena: [/CALOFIT_INTENT: CHAT]
+     Ejemplo: [CALOFIT_INTENT: CHAT] ¡Claro Leonardo! Aquí tienes 2 excelentes opciones para tu cena baja en calorías: [/CALOFIT_INTENT: CHAT]
    
-   - LUEGO: Genera las tarjetas (Exactamente 2):
+   - LUEGO: Genera las tarjetas (Exactamente 2).
+     ⚠️ ESTÁ ABSOLUTAMENTE PROHIBIDO PONER LA LISTA DE INGREDIENTES DENTRO DEL BLOQUE CHAT.
+   
+   - EJEMPLO OBLIGATORIO DEL FORMATO:
      [CALOFIT_INTENT: ITEM_RECIPE]
-     [CALOFIT_HEADER] Nombre del Plato 1 [/CALOFIT_HEADER]
-     [CALOFIT_LIST] Ingredientes... [/CALOFIT_LIST]
-     [CALOFIT_ACTION] Pasos... [/CALOFIT_ACTION]
-
-   - ⛔ PROHIBIDO: Escribir "Opción 1:", "Opción 2:" o "Opción 3:" al final del bloque CHAT o dentro del [CALOFIT_HEADER]. SOLO el nombre del plato.
-   - ⚠️ CONSISTENCIA (CRÍTICO): Genera el [CALOFIT_LIST] con ingredientes REALES. El sistema calculará las calorías exactas basándose en tu lista. Si incluyes Lomo Saltado, asegúrate de listar carne, papa, arroz y vegetales en cantidades precisas (ej: 150g de carne, 1 taza de arroz) para que el registro posterior coincida con lo mostrado.
-   - ⛔ PROHIBIDO: Escribir "Ingredientes:" o "Preparación:" DENTRO de los bloques.
-   - ⚠️ CONTROL CALÓRICO: Si el usuario pidió "ligero" o "baja caloría", CADA OPCIÓN debe tener raciones pequeñas y macros precisos.
+     [CALOFIT_HEADER] Opción 1: Ensalada de Pollo [/CALOFIT_HEADER]
+     [CALOFIT_LIST]
+     - 150g de pollo
+     - 1 taza de lechuga
+     [/CALOFIT_LIST]
+     [CALOFIT_STATS] P: 30g | C: 5g | G: 10g | Cal: 250kcal [/CALOFIT_STATS]
+     [CALOFIT_ACTION]
+     1. Cocinar el pollo
+     [/CALOFIT_ACTION]
+     
+     [CALOFIT_INTENT: ITEM_RECIPE]
+     [CALOFIT_HEADER] Opción 2: Sopa de Lentejas [/CALOFIT_HEADER]
+     ...
+     
+   - ⚠️ CONTROL CALÓRICO: Si el usuario pidió "ligero" o "baja caloría", CADA OPCIÓN debe tener raciones pequeñas y macros precisos medidos en gramos/ml.
 
 **ETIQUETAS VÁLIDAS:**
 [CALOFIT_INTENT: CHAT] -> Para saludos o consejos cortos.
@@ -1211,6 +1226,60 @@ Toda respuesta DEBE comenzar con una etiqueta de intención exacta. NO USES OTRA
                 # 2. Corregir etiquetas huérfanas o creativas sin cierre
                 etiquetas_oficiales = "CALOFIT_INTENT|CALOFIT_HEADER|CALOFIT_STATS|CALOFIT_LIST|CALOFIT_ACTION|CALOFIT_FOOTER"
                 respuesta_ia = re.sub(fr'^\[(?!(?:{etiquetas_oficiales}))[A-Z0-9_ ]+\]$', '[CALOFIT_HEADER] \g<0> [/CALOFIT_HEADER]', respuesta_ia, flags=re.MULTILINE)
+                
+                # --- v71.2: DETECCIÓN Y CONVERSIÓN DE "Opción N:" A BLOQUES CALOFIT ---
+                # Si la IA genera opciones en formato natural (Opción 1: Sopa...) SIN tags, las convertimos.
+                if re.search(r'(?:Opci[oó]n|Receta)\s*\d+\s*:', respuesta_ia, re.IGNORECASE) and '[CALOFIT_HEADER]' not in respuesta_ia:
+                    print("⚙️ v71.2: Convirtiendo formato 'Opción N:' a bloques CALOFIT_HEADER...")
+                    
+                    # 1. Separar intro del CHAT de las opciones (split en la primera "Opción N:")
+                    split_match = re.search(r'(\n|\r\n)(?:Opci[oó]n|Receta)\s*1\s*:', respuesta_ia, re.IGNORECASE)
+                    if split_match:
+                        chat_intro = respuesta_ia[:split_match.start()].strip()
+                        opciones_texto = respuesta_ia[split_match.start():].strip()
+                    else:
+                        chat_intro = ""
+                        opciones_texto = respuesta_ia
+                    
+                    # 2. Dividir las opciones individuales por "Opción N:"
+                    bloques_opciones = re.split(r'(?=(?:Opci[oó]n|Receta)\s*\d+\s*:)', opciones_texto, flags=re.IGNORECASE)
+                    bloques_opciones = [b.strip() for b in bloques_opciones if b.strip()]
+                    
+                    partes_formateadas = []
+                    if chat_intro:
+                        partes_formateadas.append(chat_intro)
+                    
+                    for bloque in bloques_opciones:
+                        # Extraer nombre del plato
+                        nombre_match = re.match(r'(?:Opci[oó]n|Receta)\s*\d+\s*:\s*\*{0,2}(.+?)\*{0,2}$', bloque, re.IGNORECASE | re.MULTILINE)
+                        if not nombre_match:
+                            partes_formateadas.append(bloque)
+                            continue
+                        
+                        nombre = nombre_match.group(1).strip()
+                        lineas_bloque = bloque.split('\n')[1:]  # Todo menos el header
+                        
+                        ingredientes = []
+                        pasos = []
+                        for linea in lineas_bloque:
+                            linea = linea.strip()
+                            if not linea: continue
+                            if re.match(r'^[-•*]\s+', linea):
+                                ingredientes.append(re.sub(r'^[-•*]\s+', '', linea))
+                            elif re.match(r'^\d+[.)\s]\s+', linea):
+                                pasos.append(re.sub(r'^\d+[.)\s]\s+', '', linea))
+                        
+                        formatted  = f"\n[CALOFIT_INTENT: ITEM_RECIPE]\n"
+                        formatted += f"[CALOFIT_HEADER] {nombre} [/CALOFIT_HEADER]\n"
+                        if ingredientes:
+                            formatted += f"[CALOFIT_LIST]\n" + "\n".join(f"- {i}" for i in ingredientes) + f"\n[/CALOFIT_LIST]\n"
+                        if pasos:
+                            formatted += f"[CALOFIT_ACTION]\n" + "\n".join(f"{i+1}. {p}" for i, p in enumerate(pasos)) + f"\n[/CALOFIT_ACTION]\n"
+                        
+                        partes_formateadas.append(formatted)
+                    
+                    respuesta_ia = "\n".join(partes_formateadas)
+                    print(f"✅ v71.2: Conversión completada. Bloques generados: {len(bloques_opciones)}")
                 
                 # 2. Corregir etiquetas creativas con sufijo (ej: [NOM_STATS] -> [CALOFIT_STATS])
                 for tag in ["HEADER", "STATS", "LIST", "ACTION", "FOOTER"]:
@@ -1430,17 +1499,6 @@ Toda respuesta DEBE comenzar con una etiqueta de intención exacta. NO USES OTRA
         else:
             # Fallback para respuestas sin INTENT tags pero con LISTA
             if "[CALOFIT_LIST]" in respuesta_ia:
-                # v70.0: DETECTOR DE CONSULTA DIRECTA
-                # Si el usuario hace una pregunta informativa y no un registro explícito,
-                # preferimos responder con texto directo en lugar de Card.
-                msg_low = mensaje_usuario.lower()
-                es_consulta_directa = any(k in msg_low for k in ["cuántas", "cuantas", "qué tiene", "que tiene", "cuánto de", "cuanto de", "macros de"])
-                if es_consulta_directa and "registra" not in msg_low and "anota" not in msg_low:
-                    print("🔍 v70.0: Consulta directa detectada, convirtiendo Card a texto...")
-                    # Extraer info de la card y convertirla a texto amigable
-                    respuesta_ia = self._convertir_card_a_texto_directo(respuesta_ia, mensaje_usuario)
-                    return respuesta_ia
-                
                 return self._procesar_card_nutricional_v67(respuesta_ia, mensaje_usuario)
             return respuesta_ia
 
@@ -1469,27 +1527,40 @@ Toda respuesta DEBE comenzar con una etiqueta de intención exacta. NO USES OTRA
         cantidad = self._parse_cantidad(cant_raw)
         if cantidad == 0.0:
             # v70.0: Mejora de estimación de piezas si no hay cantidad
+            cantidad = 1.0
+            if any(x in n_limpio for x in ["grande", "gran", "gigante", "largo"]): cantidad = 1.4
+            elif any(x in n_limpio for x in ["pequeñ", "pequeñito", "chico", "chiquito", "mini"]): cantidad = 0.6
+            
+            if not unidad_raw:
+                if any(x in n_limpio for x in ["manzana", "pera", "plátano", "huevo", "pan", "unidad", "pieza"]):
+                    unidad_raw = "unidad"
+                else:
+                    cantidad = 15.0 if any(pg in n_limpio for pg in ["aceite", "mantequilla", "aliño"]) else 100.0
+                    unidad_raw = "g"
+        else:
+            # v70.2: Si hay cantidad (ej: 1) pero dice 'grande', aplicar multiplicador
+            if any(x in n_limpio for x in ["grande", "gran"]): cantidad *= 1.4
+            elif any(x in n_limpio for x in ["pequeñ", "pequeñito", "chico"]): cantidad *= 0.6
+        unidad = (unidad_raw or "").strip().lower()
+        if unidad in ["de", "del", ""]:
             if any(x in n_limpio for x in ["manzana", "pera", "plátano", "huevo", "pan", "unidad", "pieza"]):
-                cantidad = 1.0
-                if not unidad_raw: unidad_raw = "unidad"
-            else:
-                cantidad = 15.0 if any(pg in n_limpio for pg in ["aceite", "mantequilla", "aliño"]) else 100.0
-        
-        unidad = (unidad_raw or ("g" if not cant_raw else "")).strip().lower()
+                unidad = "unidad"
+            elif not cant_raw:
+                unidad = "g"
         
         # Clasificación
         es_sal_o_especia = any(x == n_limpio or (x in n_limpio and len(n_limpio) < 6) for x in ["sal", "pimienta", "comino", "laurel", "clavo", "orégano", "especia", "canela"])
-        es_saborizante = any(x == n_limpio for x in ["agua", "hielo"])
+        es_saborizante = any(x in n_limpio for x in ["agua", "hielo", "infusión", "infusion", "té", "te ", "mate", "café solo", "cafe solo"])
         
         cant_visual = cantidad
         cals_item, p_item, c_item, g_item = 0.0, 0.0, 0.0, 0.0
         
         if info and not (es_sal_o_especia or es_saborizante):
             equiv_g = cant_visual
-            if not unidad_raw or unidad == "":
+            if unidad in ["", "unidad", "unidades", "pieza", "piezas"]:
                 if any(x in n_limpio for x in ["manzana", "pera", "plátano", "huevo"]): equiv_g = cant_visual * 150
                 elif "diente" in n_limpio: equiv_g = cant_visual * 5
-                
+            
             if unidad in ['taza', 'tazas']: equiv_g = cant_visual * 200
             elif unidad in ['cucharada', 'cda']: equiv_g = cant_visual * 15
             elif unidad in ['cucharadita', 'cdta']: equiv_g = cant_visual * 5
@@ -1507,7 +1578,7 @@ Toda respuesta DEBE comenzar con una etiqueta de intención exacta. NO USES OTRA
         else:
             if not (es_sal_o_especia or es_saborizante):
                 equiv_g = cant_visual
-                if not unidad_raw or unidad == "":
+                if unidad in ["", "unidad", "unidades", "pieza", "piezas"]:
                     if any(x in n_limpio for x in ["manzana", "pera", "plátano", "huevo"]): equiv_g = cant_visual * 150
                 
                 if unidad in ['taza', 'tazas']: equiv_g = cant_visual * 200
@@ -1578,6 +1649,12 @@ Toda respuesta DEBE comenzar con una etiqueta de intención exacta. NO USES OTRA
         ingredientes_no_encontrados = []
         
         for cant_raw, unidad_raw, nombre_raw in matches:
+            # v70.4: Filtro de RUIDO EXTREMO (Evitar que "1 g de Calorías" se tome como ingrediente)
+            n_low = nombre_raw.lower()
+            blacklist = ["caloría", "caloria", "proteína", "proteina", "carbohidrato", "grasa", "fibra", "azúcar", "azucar", "sodio", "potasio", "kcal", "carb", "prot", "gras"]
+            if any(x in n_low for x in blacklist):
+                continue
+                
             res = self._calcular_exacto_de_alimento(nombre_raw, cant_raw, unidad_raw)
             if not res["encontrado"] and not res["es_0"]:
                 ingredientes_no_encontrados.append(nombre_raw.lower())
@@ -1621,6 +1698,7 @@ Toda respuesta DEBE comenzar con una etiqueta de intención exacta. NO USES OTRA
         for it in ingredientes_calculados:
             c_scaled = it["cals"] * factor_scale
             c_round = int(round(c_scaled))
+            if c_round == 0 and not it["es_0"]: c_round = 1
             
             # v67.7: USAR EL ROUND PARA EL HEADER
             suma_cals += c_round
@@ -1648,8 +1726,14 @@ Toda respuesta DEBE comenzar con una etiqueta de intención exacta. NO USES OTRA
                     factor_est = 35 if es_hoja else 180
                     c_final = c_final * factor_est
 
-            linea_limpia = it["nombre_raw"].split('(')[0].strip()
-            label_cals = f"({c_round} kcal)" if not it["es_0"] else "(0 kcal)"
+            # v70.3: Limpieza HEURÍSTICA de nombres (eliminar macros repetidos que inyecta la IA)
+            linea_limpia = it["nombre_raw"].split('(')[0].split(':')[0].split(',')[0].split('-')[0].strip()
+            
+            # v70.2: Inyectar solo calorías en la línea para el diseño simplificado solicitado por el usuario
+            if not it["es_0"]:
+                label_cals = f" ({c_round} kcal)"
+            else:
+                label_cals = " (0 kcal)"
             
             # Formatear números (ej: 150.0 -> 150)
             c_str = f"{int(c_final)}" if c_final == int(c_final) else f"{round(c_final, 1)}".replace('.', ',')
@@ -1659,19 +1743,49 @@ Toda respuesta DEBE comenzar con una etiqueta de intención exacta. NO USES OTRA
         if "frito" in card_text.lower(): res_stats += " (Aceite incluido) 🍳"
         macros_tag = f"[CALOFIT_STATS] {res_stats} [/CALOFIT_STATS]"
         
-        updated = re.sub(r'\[CALOFIT_STATS\].*?\[/CALOFIT_STATS\]', macros_tag, card_text, flags=re.DOTALL)
-        if macros_tag not in updated: 
-            updated = updated.replace("[/CALOFIT_HEADER]", f"[/CALOFIT_HEADER]\n{macros_tag}", 1)
+        # v72.2: Reconstrucción REPETUOSA de la Card (No destruir ACTION/PREPARACIÓN)
+        # Extraer el bloque de preparación si existe
+        match_action = re.search(r'\[CALOFIT_ACTION\](.*?)\[/CALOFIT_ACTION\]', card_text, re.DOTALL | re.IGNORECASE)
+        preparacion_contenido = match_action.group(1).strip() if match_action else ""
         
+        # v3.0: Nueva estrategia de ensamblado - Reemplazo quirúrgico en lugar de reconstrucción ciega
+        # Primero, estandarizar tags en la card local para evitar fallos de regex
+        card_text = re.sub(r'\[/\s*CALOFIT_([A-Z_]+)\s*\]', r'[/CALOFIT_\1]', card_text, flags=re.IGNORECASE)
+        card_text = re.sub(r'\[\s*(CALOFIT_[A-Z_]+)(?::\s*.*?)?\s*\]', lambda m: m.group(0).replace(" ", ""), card_text, flags=re.IGNORECASE)
+
+        # Reemplazar STATS
+        if re.search(r'\[CALOFIT_STATS\].*?\[/CALOFIT_STATS\]', card_text, re.DOTALL):
+            updated = re.sub(r'\[CALOFIT_STATS\].*?\[/CALOFIT_STATS\]', macros_tag, card_text, flags=re.DOTALL)
+        else:
+            updated = card_text.replace("[/CALOFIT_HEADER]", f"[/CALOFIT_HEADER]\n{macros_tag}", 1)
+            
+        # Reemplazar LIST
         lista_tag = "[CALOFIT_LIST]\n" + "\n".join(nuevas_lineas) + "\n[/CALOFIT_LIST]"
         updated = re.sub(r'\[CALOFIT_LIST\].*?\[/CALOFIT_LIST\]', lista_tag, updated, flags=re.DOTALL)
         
+        # Asegurar que ACTION exista y esté limpio si la IA lo envió
+        if preparacion_contenido:
+            # v72.3: Si se movieron pasos de la lista a la preparación en el parser (ya ocurrió), 
+            # aquí solo nos aseguramos de no perder lo que la IA envió originalmente como Action.
+            # Limpiar posibles encabezados repetidos
+            preparacion_contenido = re.sub(r'^(preparaci[oó]n|instrucciones|pasos|tecnica)[:\.]?\s*', '', preparacion_contenido, flags=re.IGNORECASE | re.MULTILINE)
+            action_tag = f"[CALOFIT_ACTION]\n{preparacion_contenido}\n[/CALOFIT_ACTION]"
+            if "[CALOFIT_ACTION]" in updated:
+                updated = re.sub(r'\[CALOFIT_ACTION\].*?\[/CALOFIT_ACTION\]', action_tag, updated, flags=re.DOTALL)
+            else:
+                updated = updated.strip() + "\n" + action_tag
+        
         if ingredientes_no_encontrados:
-            msg_i = f"\n⚠️ Info: {', '.join(list(set(ingredientes_no_encontrados))[:2])} estimado."
-            if "[/CALOFIT_FOOTER]" in updated: updated = updated.replace("[/CALOFIT_FOOTER]", msg_i + "\n[/CALOFIT_FOOTER]")
-            else: updated += msg_i
+            msg_i = f"⚠️ Info: {', '.join(list(set(ingredientes_no_encontrados))[:2])} estimado."
+            # v73.2: Asegurar que el mensaje de "estimado" esté DENTRO del footer o desaparezca si no hay footer
+            if "[CALOFIT_FOOTER]" in updated:
+                updated = re.sub(r'\[CALOFIT_FOOTER\](.*?)\|?/CALOFIT_FOOTER\]', 
+                                 f"[CALOFIT_FOOTER] {msg_i} \\1 [/CALOFIT_FOOTER]", 
+                                 updated, flags=re.DOTALL | re.IGNORECASE)
+            else:
+                updated = updated.strip() + f"\n[CALOFIT_FOOTER] {msg_i} [/CALOFIT_FOOTER]"
             
-        return updated
+        return updated.strip()
 
     def validar_y_corregir_ejercicio(self, respuesta_ia: str, peso_usuario: float = 70.0) -> str:
         """

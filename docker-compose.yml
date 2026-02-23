@@ -36,6 +36,16 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_started
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: calofit_redis
+    restart: always
+    ports:
+      - "6379:6379"
 
 volumes:
   postgres_data:
