@@ -291,9 +291,22 @@ class IAService:
     # FUNCIONES CENTRALIZADAS - EVITAR DUPLICACIÓN
     # ==========================================================
     
+    def _calcular_tmb_mifflin_st_jeor(self, genero, edad, peso, talla):
+        """
+        📐 Fórmula Mifflin-St Jeor (Estándar Clínico Moderno)
+        genero: 1 = Masculino, 2 = Femenino
+        """
+        if genero == 1:
+            # Hombres: (10 × peso) + (6.25 × talla) - (5 × edad) + 5
+            tmb = (10 * peso) + (6.25 * talla) - (5 * edad) + 5
+        else:
+            # Mujeres: (10 × peso) + (6.25 × talla) - (5 × edad) - 161
+            tmb = (10 * peso) + (6.25 * talla) - (5 * edad) - 161
+        return round(tmb, 2)
+    
     def _calcular_tmb_harris_benedict(self, genero, edad, peso, talla):
         """
-        Fallback: Fórmula Harris-Benedict para TMB cuando el modelo ML falla.
+        Fallback: Fórmula Harris-Benedict para TMB.
         genero: 1 = Masculino, 2 = Femenino
         """
         if genero == 1:
@@ -322,27 +335,23 @@ class IAService:
         """
         print(f"📐 Calculando macros: Peso={peso}kg, Objetivo={objetivo_key}, Calorías={calorias_diarias}")
         
-        # 1. Determinar g/kg según objetivo (Rango Científico: P 1.6-2.2, G 0.7-1.0)
+        # 1. Determinar g/kg según objetivo (Basado en recomendación Nutricionista)
+        # Proteína fija entre 1.6 - 2.2 g/kg (Déficit/Superávit)
         if "perder" in objetivo_key.lower():
-            # Déficit: Maximizamos proteína para proteger músculo, Grasas al mínimo saludable
-            g_proteina_kg = 2.2  # Rango alto (2.2g)
-            g_grasa_kg = 0.7     # Rango bajo (0.7g) para dar espacio a carbos
+            g_proteina_kg = 2.2  # Maximizamos proteína en déficit
         elif "ganar" in objetivo_key.lower():
-            # Volumen: Proteína moderada (suficiente), Grasas altas para superávit fácil
-            g_proteina_kg = 1.8  # Rango medio (1.8g) es suficiente para crecer
-            g_grasa_kg = 1.0     # Rango alto (1.0g)
+            g_proteina_kg = 1.8  # Suficiente para superávit
         else:
-            # Mantenimiento: Balance perfecto
-            g_proteina_kg = 2.0
-            g_grasa_kg = 0.9
-        
-        # 2. Calcular gramos de proteína y grasa
+            g_proteina_kg = 2.0  # Balance para mantenimiento
+            
         proteinas_g = round(peso * g_proteina_kg, 1)
-        grasas_g = round(peso * g_grasa_kg, 1)
         
-        # 3. Carbohidratos por diferencia (método profesional)
-        calorias_p_g = (proteinas_g * 4) + (grasas_g * 9)
-        calorias_restantes = max(0, calorias_diarias - calorias_p_g)
+        # 2. Grasas: 25% de las calorías totales (Recomendación Genérica del Experto)
+        calorias_grasas = calorias_diarias * 0.25
+        grasas_g = round(calorias_grasas / 9, 1)
+        
+        # 3. Carbohidratos: El resto de las calorías (Como indicó el experto)
+        calorias_restantes = max(0, calorias_diarias - (proteinas_g * 4) - (grasas_g * 9))
         carbohidratos_g = round(calorias_restantes / 4, 1)
         
         # 4. Ajustes por Condiciones Médicas
@@ -376,13 +385,13 @@ class IAService:
         """
         print(f"🔬 Calculando requerimiento: Género={genero}, Edad={edad}, Peso={peso}, Talla={talla}, Nivel={nivel_actividad}, Objetivo={objetivo}")
         
-        # 0. Cálculo Base Harris-Benedict (Baseline de Seguridad)
-        basal_hb = self._calcular_tmb_harris_benedict(genero, edad, peso, talla)
+        # 0. Cálculo Base Mifflin-St Jeor (v74.0: Estandar Clínico Sugerido)
+        basal_clinica = self._calcular_tmb_mifflin_st_jeor(genero, edad, peso, talla)
         
         self._ensure_main_model()
         if not self.model:
-            print("⚠️ Modelo ML no disponible, usando Harris-Benedict como baseline")
-            basal = basal_hb
+            print("⚠️ Modelo ML no disponible, usando Mifflin-St Jeor como baseline")
+            basal = basal_clinica
         else:
             try:
                 # 1. Predicción con Machine Learning
@@ -392,24 +401,22 @@ class IAService:
                 pred = self.model.predict(df)
                 basal_ml = pred.item()
                 
-                # 🛡️ SANITY CHECK (v1.6): Blindaje Clínico Agresivo
-                # Evitar división por cero si basal_hb es 0 (aunque poco probable para TMB)
-                if basal_hb == 0:
-                    error_relativo = float('inf') # Representa un error muy grande
+                # 🛡️ SANITY CHECK: Comparar con Mifflin-St Jeor (Fórmula clínica estable)
+                if basal_clinica == 0:
+                    error_relativo = float('inf')
                 else:
-                    error_relativo = abs(basal_ml - basal_hb) / basal_hb
-
+                    error_relativo = abs(basal_ml - basal_clinica) / basal_clinica
+                
                 if error_relativo > 0.15: # Desviación mayor al 15%
-                    print(f"⚠️ [IA-SHIELD] ML {basal_ml:.0f} vs HB {basal_hb:.0f} ({error_relativo*100:.1f}%) - Desviación excesiva.")
-                    # Si el ML falla por mucho, confiamos 95% en Harris-Benedict (valor clínico seguro)
-                    basal = (basal_hb * 0.95) + (basal_ml * 0.05)
-                    print(f"⚖️ Ajuste clínico aplicado: {basal:.2f} kcal")
+                    print(f"⚠️ [IA-SHIELD] ML {basal_ml:.0f} vs Mifflin {basal_clinica:.0f} ({error_relativo*100:.1f}%) - Desviación excesiva.")
+                    # Confiamos 90% en la fórmula clínica para evitar alucinaciones extremas en tesis
+                    basal = (basal_clinica * 0.90) + (basal_ml * 0.10)
                 else:
                     basal = basal_ml
-                    print(f"✅ TMB calculado por ML: {basal:.2f} kcal")
+                    print(f"✅ TMB calculado por ML (valido vs clínico): {basal:.2f} kcal")
             except Exception as e:
-                print(f"❌ Error en predicción ML: {e}, usando Harris-Benedict")
-                basal = basal_hb
+                print(f"❌ Error en predicción ML: {e}, usando Mifflin-St Jeor")
+                basal = basal_clinica
         
         mantenimiento = basal * nivel_actividad
         

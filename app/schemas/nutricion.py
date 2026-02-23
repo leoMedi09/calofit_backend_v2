@@ -86,3 +86,17 @@ class AlertaSaludResponse(AlertaSaludBase):
 class AlertaSaludUpdate(BaseModel):
     estado: str
     atendido_por_id: Optional[int] = None
+
+# --- Esquemas de Actualización para Nutricionistas ---
+class PlanDiarioUpdate(BaseModel):
+    calorias_dia: Optional[float] = None
+    proteinas_g: Optional[float] = None
+    carbohidratos_g: Optional[float] = None
+    grasas_g: Optional[float] = None
+    estado: Optional[str] = "oficial"
+
+class PlanNutricionalUpdate(BaseModel):
+    objetivo: Optional[str] = None
+    observaciones: Optional[str] = None
+    status: Optional[str] = None
+    detalles_diarios: Optional[List[PlanDiarioUpdate]] = None

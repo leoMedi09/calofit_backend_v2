@@ -88,27 +88,39 @@ async def listar_personal_staff(
             User.id != current_user.id
         ).all()
         
-        # También incluir nutricionistas y entrenadores
+        # También incluir nutricionistas y entrenadores de forma flexible
         especialistas = db.query(User).filter(
-            User.role_name.in_(["nutritionist", "coach", "trainer"]),
+            (User.role_name.ilike("%nutri%")) | 
+            (User.role_name.ilike("%coach%")) | 
+            (User.role_name.ilike("%train%")) |
+            (User.role_name.ilike("%entrenador%")),
             User.id != current_user.id
         ).all()
         
         usuarios_db.extend(especialistas)
         
         # 3. Mapeo manual a diccionario
-        return [
-            {
+        res = []
+        for u in usuarios_db:
+            # Calcular carga de trabajo según el rol
+            role_lower = u.role_name.lower()
+            count = 0
+            if "nutri" in role_lower:
+                count = len(u.clients_as_nutri)
+            elif "coach" in role_lower or "train" in role_lower:
+                count = len(u.clients_as_coach)
+                
+            res.append({
                 "id": u.id,
                 "first_name": u.first_name if u.first_name else "N/A",
                 "last_name_paternal": u.last_name_paternal if u.last_name_paternal else "",
                 "last_name_maternal": u.last_name_maternal if u.last_name_maternal else "",
                 "email": u.email if u.email else "sin@email.com",
                 "role_name": u.role_name if u.role_name else "staff",
-                "is_active": u.is_active
-            } 
-            for u in usuarios_db
-        ]
+                "is_active": u.is_active,
+                "pacientes_count": count
+            })
+        return res
     except Exception as e:
         print(f"❌ ERROR LISTAR STAFF: {str(e)}")
         raise HTTPException(
