@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, Text, DateTime, Date
+from sqlalchemy import Column, Integer, String, Float, ForeignKey, Text, DateTime, Date, Boolean
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from sqlalchemy.dialects.postgresql import ARRAY
@@ -28,6 +28,12 @@ class Client(Base):
     
     assigned_coach_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     assigned_nutri_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    
+    # --- CAMPOS ESTRATÉGICOS IA (v80.0) ---
+    ai_strategic_focus = Column(String, nullable=True)  # Foco semanal sugerido por Nutri
+    recommended_foods = Column(ARRAY(String), nullable=True, default=[]) # Lista Blanca
+    forbidden_foods = Column(ARRAY(String), nullable=True, default=[])  # Lista Negra
+    is_strategic_guide_validated = Column(Boolean, default=False) # ✅ Indica si el Nutri ya validó la estrategia
     
     created_at = Column(DateTime, default=datetime.utcnow)
 

@@ -5,14 +5,14 @@ from app.core.database import get_db
 from app.models.client import Client
 from app.models.user import User
 from app.api.routes.auth import get_current_user
-from app.services.ia_service import IAService
+from app.services.ia_service import ia_service
 from app.models.nutricion import PlanNutricional, PlanDiario
 from app.models.historial import AlertaSalud, HistorialPeso
 from app.schemas.nutricion import PlanNutricionalResponse, PlanNutricionalUpdate
+from app.schemas.client import StrategicGuideUpdate
 from datetime import datetime, timedelta
 
 router = APIRouter()
-ia_service = IAService()
 
 def check_is_nutri(current_user: User):
     role = str(getattr(current_user, "role_name", "")).lower()
@@ -87,7 +87,8 @@ def get_assigned_patients(
             "adherencia": adherencia,
             "alerta": alerta_data.get("mensaje", ""),
             "alerta_nivel": alerta_data.get("nivel", "Bajo"),
-            "gender": c.gender
+            "gender": c.gender,
+            "is_validated": c.is_strategic_guide_validated
         })
     
     return result
@@ -109,18 +110,121 @@ def get_patient_progress(
         raise HTTPException(status_code=403, detail="No tienes permiso para ver este paciente")
 
     # Obtener historial de peso, imc y progreso calórico
-    historial_peso = [{"fecha": h.fecha, "valor": h.peso} for h in client.historial_peso]
-    historial_imc = [{"fecha": h.fecha, "valor": h.imc} for h in client.historial_imc]
+    historial_peso = [{"fecha": h.fecha_registro, "valor": h.peso_kg} for h in client.historial_peso]
+    historial_imc = [{"fecha": h.fecha_registro, "valor": h.imc} for h in client.historial_imc]
     
+    # Obtener alertas de salud (v80.0)
+    alertas = [{
+        "id": a.id,
+        "tipo": a.tipo,
+        "descripcion": a.descripcion,
+        "severidad": a.severidad,
+        "estado": a.estado,
+        "fecha": a.fecha_deteccion
+    } for a in client.alertas_salud]
+
     return {
         "client_id": client.id,
         "full_name": f"{client.first_name} {client.last_name_paternal}",
+        "medical_conditions": client.medical_conditions or [],
+        "ai_strategic_focus": client.ai_strategic_focus,
+        "recommended_foods": client.recommended_foods or [],
+        "forbidden_foods": client.forbidden_foods or [],
+        "historial_paternal": historial_peso, # Correcting name if necessary or keeping original
         "historial_peso": historial_peso,
         "historial_imc": historial_imc,
+        "alertas_salud": alertas,
         "current_weight": client.weight,
         "current_height": client.height,
+        "goal": client.goal,
+        "gender": client.gender,
+        "is_validated": client.is_strategic_guide_validated
     }
 
+@router.get("/cliente/{id}/sugerir-estrategia")
+async def suggest_strategic_guide(
+    id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    check_is_nutri(current_user)
+    
+    client = db.query(Client).filter(Client.id == id).first()
+    if not client:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+        
+    # Recopilar alertas recientes (últimos 15 días) para contexto
+    date_limit = datetime.utcnow() - timedelta(days=15)
+    alertas_recent = [a for a in client.alertas_salud if a.fecha_deteccion >= date_limit]
+    
+    alertas_list = [{
+        "tipo": a.tipo,
+        "descripcion": a.descripcion,
+        "severidad": a.severidad
+    } for a in alertas_recent]
+    
+    # Calcular IMC actual
+    imc = 0
+    if client.weight and client.height:
+        height_m = client.height / 100
+        imc = round(client.weight / (height_m * height_m), 1)
+
+    # Calcular edad
+    edad = 0
+    if client.birth_date:
+        today = datetime.now()
+        edad = today.year - client.birth_date.year - ((today.month, today.day) < (client.birth_date.month, client.birth_date.day))
+
+    # Obtener historial de peso para tendencia
+    historial_peso = [{"fecha": h.fecha_registro, "valor": h.peso_kg} for h in client.historial_peso]
+
+    perfil = {
+        "full_name": f"{client.first_name} {client.last_name_paternal}",
+        "gender": "Hombre" if client.gender == 'M' else "Mujer",
+        "age": edad,
+        "current_weight": client.weight,
+        "current_height": client.height,
+        "imc": imc,
+        "activity_level": client.activity_level or "Moderado",
+        "goal": client.goal,
+        "medical_conditions": client.medical_conditions or [],
+        "weight_history": historial_peso
+    }
+    
+    sugerencia = await ia_service.sugerir_guia_estrategica(perfil, alertas_list)
+    return sugerencia
+
+@router.post("/actualizar-guia-estrategica/{id}")
+def update_strategic_guide(
+    id: int,
+    guide: StrategicGuideUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    check_is_nutri(current_user)
+    
+    client = db.query(Client).filter(Client.id == id).first()
+    if not client:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+        
+    if current_user.role_name.upper() == "NUTRICIONISTA" and client.assigned_nutri_id != current_user.id:
+        raise HTTPException(status_code=403, detail="No tienes permiso para modificar este paciente")
+
+    # Actualización estratégica (v80.0)
+    if guide.ai_strategic_focus is not None:
+        client.ai_strategic_focus = guide.ai_strategic_focus
+    if guide.recommended_foods is not None:
+        client.recommended_foods = guide.recommended_foods
+    if guide.forbidden_foods is not None:
+        client.forbidden_foods = guide.forbidden_foods
+    if guide.medical_conditions is not None:
+        client.medical_conditions = guide.medical_conditions
+    
+    # ✅ Si se actualiza la guía, se marca como validada
+    client.is_strategic_guide_validated = True
+        
+    db.commit()
+    return {"status": "success", "message": "Guía estratégica actualizada para la IA"}
 @router.post("/validar-plan/{id}")
 def validate_plan(
     id: int,

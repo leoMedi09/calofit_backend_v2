@@ -146,15 +146,21 @@ async def asignar_especialistas_a_cliente(
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
         
     if nutri_id:
-        nutri = db.query(User).filter(User.id == nutri_id, User.role_name == "nutritionist").first()
+        nutri = db.query(User).filter(
+            User.id == nutri_id, 
+            (User.role_name.ilike("%nutri%")) | (User.role_name.ilike("%nutritionist%"))
+        ).first()
         if not nutri:
-            raise HTTPException(status_code=400, detail="ID de nutricionista no válido")
+            raise HTTPException(status_code=400, detail="ID de nutricionista no válido o el usuario no tiene rol de nutricionista")
         cliente.assigned_nutri_id = nutri_id
         
     if trainer_id:
-        trainer = db.query(User).filter(User.id == trainer_id, User.role_name.in_(["coach", "trainer"])).first()
+        trainer = db.query(User).filter(
+            User.id == trainer_id, 
+            (User.role_name.ilike("%coach%")) | (User.role_name.ilike("%trainer%")) | (User.role_name.ilike("%entrenador%"))
+        ).first()
         if not trainer:
-            raise HTTPException(status_code=400, detail="ID de entrenador no válido")
+            raise HTTPException(status_code=400, detail="ID de entrenador no válido o el usuario no tiene rol de entrenador")
         cliente.assigned_coach_id = trainer_id
         
     db.commit()

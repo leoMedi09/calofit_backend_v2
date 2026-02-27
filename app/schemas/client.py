@@ -61,7 +61,15 @@ class ChangePassword(BaseModel):
     new_password: str = Field(..., min_length=6)
     confirm_password: str = Field(..., min_length=6)
 
-# --- 🛡️ NUEVOS ESQUEMAS PARA EL SISTEMA DE CÓDIGO OTP ---
+# --- 🚀 NUEVOS ESQUEMAS ESTRATÉGICOS (v80.0) ---
+
+class StrategicGuideUpdate(BaseModel):
+    """Para que el nutri guíe a la IA desde el expediente"""
+    ai_strategic_focus: Optional[str] = None
+    recommended_foods: Optional[List[str]] = None
+    forbidden_foods: Optional[List[str]] = None
+    medical_conditions: Optional[List[str]] = None  # Nutri también puede ajustar
+    is_strategic_guide_validated: Optional[bool] = None
 
 class ResetPasswordRequest(BaseModel):
     """Para cuando el usuario ingresa su email para recibir el código"""

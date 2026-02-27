@@ -546,6 +546,89 @@ def obtener_perfil_por_uid(
     return perfil_response
 
 
+# ✅ NUEVO: Check-in Semanal (Sábados de Calibración)
+@router.get("/checkin-status")
+def check_checkin_status(
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Verifica si el usuario necesita hacer el check-in del sábado"""
+    now = datetime.now()
+    # 0 = Lunes, 5 = Sábado, 6 = Domingo
+    is_saturday = now.weekday() == 5
+    
+    if not is_saturday:
+        return {"needed": False, "message": "Hoy no es día de check-in"}
+        
+    # Verificar si ya registró peso hoy
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    already_done = db.query(Client).filter(
+        Client.id == current_user.id,
+        Client.historial_peso.any(fecha_registro >= today_start)
+    ).first()
+    
+    # Calcular días desde última actualización para el "Precision Meter"
+    last_weight = db.query(Client).filter(Client.id == current_user.id).first().historial_peso
+    days_since = 30 # Default si no hay historial
+    if last_weight:
+        ultimo = sorted(last_weight, key=lambda x: x.fecha_registro, reverse=True)[0]
+        days_since = (now - ultimo.fecha_registro).days
+        
+    precision = 100
+    if days_since > 7: precision = 40
+    if days_since > 14: precision = 10
+
+    return {
+        "needed": not already_done,
+        "precision_score": precision,
+        "days_since_update": days_since
+    }
+
+@router.post("/checkin")
+def process_checkin(
+    data: dict, # {"weight": 80.5, "height": 175, "activity_level": "Moderado"}
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Procesa el check-in semanal y actualiza el historial"""
+    cliente = db.query(Client).filter(Client.id == current_user.id).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+        
+    old_weight = cliente.weight
+    new_weight = data.get("weight")
+    
+    # Actualizar perfil
+    cliente.weight = new_weight
+    if data.get("height"):
+        cliente.height = data.get("height")
+    if data.get("activity_level"):
+        cliente.activity_level = data.get("activity_level")
+        
+    # Registrar en historial
+    from app.models.nutricion import HistorialPeso
+    nuevo_registro = HistorialPeso(
+        client_id=cliente.id,
+        peso_kg=new_weight,
+        fecha_registro=datetime.now()
+    )
+    db.add(nuevo_registro)
+    
+    # Lógica de alerta si el cambio es brusco (> 3% en una semana)
+    alerta_staff = False
+    if old_weight:
+        diff_percent = abs(new_weight - old_weight) / old_weight * 100
+        if diff_percent > 3:
+            alerta_staff = True
+            
+    db.commit()
+    return {
+        "status": "success",
+        "message": "Check-in completado. ¡Tu IA está calibrada!",
+        "requires_staff_review": alerta_staff
+    }
+
+
 # ✅ NUEVO ENDPOINT: Recalcular dieta cuando cambia objetivo o actividad
 @router.put("/recalcular-dieta/{cliente_id}", response_model=ClientResponseConDieta)
 def recalcular_dieta(

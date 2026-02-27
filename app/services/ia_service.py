@@ -4,6 +4,7 @@ import os
 import asyncio
 import functools
 import pandas as pd
+from typing import List
 try:
     from groq import AsyncGroq
 except ImportError:
@@ -284,20 +285,38 @@ class IAService:
             score = self.alerta_sim.output['alerta_tipo']
             
             if score < 33:
+                mensajes = [
+                    "¡Nivel de compromiso óptimo! El paciente mantiene un registro constante. Sigue reforzando este hábito.",
+                    "Excelente adherencia detectada. El paciente está alineado con sus metas diarias. ¡Gran trabajo de seguimiento!",
+                    "Compromiso sobre el promedio. Los registros son consistentes y reflejan disciplina en el plan nutricional."
+                ]
+                import random
                 return {
-                    "mensaje": "¡Excelente progreso! Sigue así, campeón.",
+                    "mensaje": random.choice(mensajes),
                     "nivel": "Bajo",
                     "score": round(float(score), 2)
                 }
             elif score < 66:
+                mensajes = [
+                    "Adherencia estable, pero con baches. Se recomienda indagar si hay dificultades en los registros de cena.",
+                    "Progreso moderado. El paciente tiene consistencia parcial; falta reforzar el registro de todos los macros.",
+                    "Vas por buen camino, pero hay días sin registros completos. La supervisión constante ayudará a estabilizar."
+                ]
+                import random
                 return {
-                    "mensaje": "Vas bien, pero puedes mejorar un poco más.",
+                    "mensaje": random.choice(mensajes),
                     "nivel": "Medio",
                     "score": round(float(score), 2)
                 }
             else:
+                mensajes = [
+                    "Alerta de abandono potencial. El paciente tiene muy baja actividad de registro. Requiere contacto motivador.",
+                    "Compromiso crítico detectado. Los registros son insuficientes para un análisis nutricional válido.",
+                    "Necesita intervención. La falta de registros sugiere falta de adherencia al plan o dificultad con la plataforma."
+                ]
+                import random
                 return {
-                    "mensaje": "Necesitas más compromiso. ¡Vamos, tú puedes!",
+                    "mensaje": random.choice(mensajes),
                     "nivel": "Alto",
                     "score": round(float(score), 2)
                 }
@@ -573,11 +592,20 @@ class IAService:
         alerta_final = f"{alerta_personalizada}. {alerta_medica_macros}" if alerta_medica_macros else alerta_personalizada
 
         # Prompt profesional para Tesis - Lógica de Equivalentes Peruanos
+        foco = perfil_usuario.get('ai_strategic_focus', 'Bienestar General')
+        rec = perfil_usuario.get('recommended_foods', [])
+        pro = perfil_usuario.get('forbidden_foods', [])
+
         prompt = f"""
         Eres un Nutricionista Colegiado en Perú experto en IA. 
         REQUERIMIENTO: {calorias_reales} kcal | P: {prot_g}g, C: {carb_g}g, G: {gras_g}g.
         
-        REGLA DE ORO (MANDATORIA): 
+        GUÍA ESTRATÉGICA DEL NUTRICIONISTA (MANDATORIO):
+        - FOCO PRINCIPAL: {foco}
+        - ALIMENTOS A PRIORIZAR: {', '.join(rec) if rec else 'Ninguno'}
+        - ALIMENTOS A EVITAR/PROHIBIDOS: {', '.join(pro) if pro else 'Ninguno'}
+
+        REGLA DE ORO: 
         1. REVISA LA SECCIÓN DE 'PLATOS DISPONIBLES (MUESTRA)' QUE SE TE ENTREGÓ ARRIBA.
         2. SI HAY PLATOS DE LA REGIÓN DEL USUARIO (Selva/Sierra/Costa), ELIGE UNO DE ESOS OBLIGATORIAMENTE.
         3. ¡NO INVENTES PLATOS EXTRANJEROS NI MEZCLAS RARAS! (Chifrijo es de COSTA RICA, NO PERÚ).
@@ -1027,8 +1055,9 @@ class IAService:
             print(f"Error preparando contexto cultural/médico: {e}")
 
         # --- LÓGICA DE EMERGENCIA VEGANA (FUERA DEL TRY) ---
-        if "vegano" in contexto.lower() or "vegetariano" in contexto.lower():
-             texto_extra += "\n\n⛔ ALERTA VEGANA CRÍTICA: El usuario es VEGANO/VEGETARIANO. PROHIBIDO: Carne, Pollo, Pescado, Huevos, Leche, Queso, Miel. ¡NI UNA SOLA TRAZA! Usa: Tofu, Soya, Quinua, Menestras, Seitán."
+        contexto_full = (contexto + " " + texto_extra).lower()
+        if any(v in contexto_full for v in ["vegano", "vegana", "vegetariano", "vegetariana"]):
+             texto_extra += "\n\n⛔ ALERTA VEGANA CRÍTICA: El usuario es VEGANO/VEGETARIANO. ESTÁ ESTRICTAMENTE PROHIBIDO sugerir: Carne, Pollo, Pescado, Huevos, Leche, Queso, mantequilla o Miel. ¡NI UNA SOLA TRAZA! Usa proteínas vegetales: Tofu, Soya, Quinua, Lentejas, Garbanzos, Seitán."
 
         # (v11.5 - Prompt Dinámico de Intención)
         es_consulta_info = False
@@ -1132,10 +1161,15 @@ Toda respuesta DEBE comenzar con una etiqueta de intención exacta. NO USES OTRA
      [/CALOFIT_ACTION]
      
      [CALOFIT_INTENT: ITEM_RECIPE]
-     [CALOFIT_HEADER] Opción 2: Sopa de Lentejas [/CALOFIT_HEADER]
-     ...
-     
-   - ⚠️ CONTROL CALÓRICO: Si el usuario pidió "ligero" o "baja caloría", CADA OPCIÓN debe tener raciones pequeñas y macros precisos medidos en gramos/ml.
+    - ⚠️ CONTROL CALÓRICO Y LÓGICA DE CENA: 
+      - Si el usuario pide "ligero", "cena" o "baja caloría", la porción debe ser moderada. 
+      - TECHO CALÓRICO PARA CENAS LIGERAS: 300 - 450 kcal máximo. No sugieras platos de 600+ kcal como "ligeros".
+      - Macros precisos medidos en gramos/ml.
+
+### 🛡️ PROTOCOLO DE CUMPLIMIENTO ESTRATÉGICO (MANDATORIO):
+1. **ALIMENTOS RECOMENDADOS:** SIEMPRE que sugieras una receta o plato (ITEM_RECIPE), utiliza prioritariamente los alimentos de la lista RECOMENDADOS del nutricionista como ingredientes principales.
+2. **ALIMENTOS PROHIBIDOS:** Está ESTRICTAMENTE PROHIBIDO incluir cualquier ingrediente de la lista PROHIBIDOS en las recetas, sugerencias o consejos. No los menciones ni siquiera como opción opcional.
+3. **EXPLICACIÓN CON ARRAIGO:** Si el usuario pregunta por qué usas ciertos ingredientes, menciona sutilmente que estás siguiendo el plan diseñado por su nutricionista para este ciclo.
 
 **ETIQUETAS VÁLIDAS:**
 [CALOFIT_INTENT: CHAT] -> Para saludos o consejos cortos.
@@ -2017,6 +2051,71 @@ Toda respuesta DEBE comenzar con una etiqueta de intención exacta. NO USES OTRA
             return float(c_clean)
         except:
             return 1.0 # Fallback seguro ante basura o formato no reconocido
+    async def sugerir_guia_estrategica(self, perfil_usuario: dict, alertas_recientes: List[dict]):
+        """
+        Analiza el perfil y alertas para sugerir una guía estratégica al Nutricionista.
+        """
+        # self.groq_client is initialized in __init__
+
+        alertas_str = "\n".join([f"- {a['tipo']}: {a['descripcion']} ({a['severidad']})" for a in alertas_recientes])
+        
+        # Historial de peso para tendencia
+        historial_peso = perfil_usuario.get('weight_history', [])
+        tendencia_peso = "Estable"
+        if len(historial_peso) >= 2:
+            ultimo = historial_peso[0]['valor']
+            penultimo = historial_peso[1]['valor']
+            if ultimo > penultimo: tendencia_peso = "Aumentando"
+            elif ultimo < penultimo: tendencia_peso = "Disminuyendo"
+
+        prompt = f"""
+        Eres un Nutricionista Jefe experto en Nutrición Funcional e IA. 
+        DEBES generar una SUGERENCIA ESTRATÉGICA HOLÍSTICA para un paciente basándote en su EXPEDIENTE TOTAL:
+        
+        DATOS BIOMÉTRICOS:
+        - Nombre: {perfil_usuario.get('full_name')}
+        - Género: {perfil_usuario.get('gender')} | Edad: {perfil_usuario.get('age')} años
+        - Peso Actual: {perfil_usuario.get('current_weight')} kg | Talla: {perfil_usuario.get('current_height')} cm
+        - IMC: {perfil_usuario.get('imc')} | Tendencia de Peso: {tendencia_peso}
+        - Nivel de Actividad: {perfil_usuario.get('activity_level')}
+        
+        PERFIL CLÍNICO Y METAS:
+        - Objetivo: {perfil_usuario.get('goal')}
+        - Condiciones Médicas: {', '.join(perfil_usuario.get('medical_conditions', []))}
+        
+        ALERTAS RECIENTES (Síntomas/Adherencia):
+        {alertas_str if alertas_str else "Sin alertas recientes."}
+        
+        TAREA CRÍTICA:
+        1. Define un FOCO ESTRATÉGICO SEMANAL (máximo 15 palabras). Debe ser motivador y abordar directamente su condición (ej: "Priorizar saciedad y control glucémico" si tiene diabetes o "Maximizar recuperación y síntesis proteica" si es deportista).
+        2. ALIMENTOS RECOMENDADOS (5-10): Enfócate en la 'Lista Blanca' de ingredientes peruanos de alta densidad nutricional que ayuden a su objetivo y condición (ej: en veganos con anemia, priorizar lentejas y espinacas).
+        3. ALIMENTOS PROHIBIDOS (5-10): 'Lista Negra' de ingredientes a evitar según su perfil (ej: evitar soya si tiene hipotiroidismo, o azúcares refinados si busca pérdida de grasa).
+        
+        RESPONDE ÚNICAMENTE CON UN JSON VÁLIDO:
+        {{
+            "ai_strategic_focus": "Texto del foco",
+            "recommended_foods": ["Ingrediente 1", "Ingrediente 2", ...],
+            "forbidden_foods": ["Ingrediente 1", "Ingrediente 2", ...]
+        }}
+        """
+        
+        try:
+            response = await self.groq_client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=300,
+                temperature=0.6,
+                response_format={ "type": "json_object" }
+            )
+            return json.loads(response.choices[0].message.content.strip())
+        except Exception as e:
+            print(f"Error sugiriendo estrategia: {e}")
+            return {
+                "ai_strategic_focus": "Mantener constancia y control de porciones.",
+                "recommended_foods": ["Pechuga de pollo", "Quinua", "Verduras verdes"],
+                "forbidden_foods": ["Azúcares refinados", "Frituras", "Gaseosas"]
+            }
 
 
-ia_engine = IAService()
+ia_service = IAService()
+ia_engine = ia_service

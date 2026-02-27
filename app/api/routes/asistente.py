@@ -240,8 +240,16 @@ async def consultar_asistente(
         calorias_meta = plan_hoy_data['calorias_dia']
         restantes = max(0, calorias_meta - consumo_real + quemadas_real)
 
+        # Variables de guía estratégica del Nutricionista (v80.0)
+        foco = perfil.ai_strategic_focus or "Bienestar General"
+        alimentos_pro = perfil.forbidden_foods or []
+        alimentos_rec = perfil.recommended_foods or []
+
         contexto_asistente = (
             f"Eres el coach de {perfil.first_name}. "
+            f"FOCO ESTRATÉGICO (Orden del Nutricionista): {foco}. "
+            f"ALIMENTOS RECOMENDADOS: {', '.join(alimentos_rec) if alimentos_rec else 'Normal'}. "
+            f"ALIMENTOS PROHIBIDOS: {', '. join(alimentos_pro) if alimentos_pro else 'Ninguno'}. "
             f"PERFIL: {perfil.weight}kg, {perfil.height}cm, {edad} años. "
             f"ALERGIAS: {texto_alergias}. "
             f"PREFERENCIAS DIETÉTICAS: {texto_dieta}. "

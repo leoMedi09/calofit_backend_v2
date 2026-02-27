@@ -189,7 +189,8 @@ async def get_daily_summary(
             "calorias_quemadas": calorias_quemadas_hoy,
         },
         "plan_nutricional": plan_objetivo,
-        "ai_insight": ai_insight
+        "ai_insight": ai_insight,
+        "is_strategy_validated": cliente.is_strategic_guide_validated
     }
 
 
