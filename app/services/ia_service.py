@@ -2087,13 +2087,13 @@ Toda respuesta DEBE comenzar con una etiqueta de intención exacta. NO USES OTRA
         {alertas_str if alertas_str else "Sin alertas recientes."}
         
         TAREA CRÍTICA:
-        1. Define un FOCO ESTRATÉGICO SEMANAL (máximo 15 palabras). Debe ser motivador y abordar directamente su condición (ej: "Priorizar saciedad y control glucémico" si tiene diabetes o "Maximizar recuperación y síntesis proteica" si es deportista).
-        2. ALIMENTOS RECOMENDADOS (5-10): Enfócate en la 'Lista Blanca' de ingredientes peruanos de alta densidad nutricional que ayuden a su objetivo y condición (ej: en veganos con anemia, priorizar lentejas y espinacas).
-        3. ALIMENTOS PROHIBIDOS (5-10): 'Lista Negra' de ingredientes a evitar según su perfil (ej: evitar soya si tiene hipotiroidismo, o azúcares refinados si busca pérdida de grasa).
+        1. Define una MISIÓN ESTRATÉGICA SEMANAL (máximo 15 palabras). Debe ser el objetivo principal para los próximos 7 días, motivador y abordar directamente su condición (ej: "Misión: Estabilizar glucosa y priorizar fibra esta semana").
+        2. GUÍA SEMANAL DE ALIMENTOS RECOMENDADOS (12-15): Lista variada de ingredientes peruanos (proteínas, vegetales, frutas, carbohidratos complejos) para que el paciente incorpore en su dieta de toda la semana.
+        3. GUÍA SEMANAL DE ALIMENTOS PROHIBIDOS (12-15): Lista amplia de restricciones para esta semana según su perfil para evitar monotonía en el rechazo.
         
         RESPONDE ÚNICAMENTE CON UN JSON VÁLIDO:
         {{
-            "ai_strategic_focus": "Texto del foco",
+            "ai_strategic_focus": "Misión: [Texto de la misión semanal]",
             "recommended_foods": ["Ingrediente 1", "Ingrediente 2", ...],
             "forbidden_foods": ["Ingrediente 1", "Ingrediente 2", ...]
         }}

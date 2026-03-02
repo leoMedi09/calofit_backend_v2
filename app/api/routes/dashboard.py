@@ -190,6 +190,7 @@ async def get_daily_summary(
         },
         "plan_nutricional": plan_objetivo,
         "ai_insight": ai_insight,
+        "ai_strategic_focus": cliente.ai_strategic_focus,
         "is_strategy_validated": cliente.is_strategic_guide_validated
     }
 
@@ -212,8 +213,9 @@ async def get_calories_trend(
     dias_semana = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']
     resultado = []
 
-    # Obtener progreso real de los últimos 7 días
-    fecha_limite = datetime.now().date() - timedelta(days=6)
+    from app.core.utils import get_peru_date
+    hoy = get_peru_date()
+    fecha_limite = hoy - timedelta(days=6)
 
     progreso_calorias = db.query(ProgresoCalorias).filter(
         ProgresoCalorias.client_id == cliente_id,
@@ -225,7 +227,7 @@ async def get_calories_trend(
 
     # Generar datos para los últimos 7 días
     for i in range(7):
-        fecha = datetime.now().date() - timedelta(days=6-i)
+        fecha = hoy - timedelta(days=6-i)
         dia_semana_idx = fecha.weekday()
 
         # Buscar datos reales para esta fecha
@@ -272,8 +274,9 @@ async def get_weight_history(
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
     # Obtener historial de peso real de los últimos 6 meses
-    from datetime import datetime, timedelta
-    fecha_limite = datetime.now().date() - timedelta(days=180)  # 6 meses atrás
+    from app.core.utils import get_peru_date
+    hoy = get_peru_date()
+    fecha_limite = hoy - timedelta(days=180)  # 6 meses atrás
 
     registros_peso = db.query(HistorialPeso).filter(
         HistorialPeso.client_id == cliente_id,
@@ -285,14 +288,14 @@ async def get_weight_history(
         return [{
             "mes": 0,
             "peso": cliente.weight or 70.0,
-            "fecha": datetime.now().date().isoformat()
+            "fecha": hoy.isoformat()
         }]
 
     # Convertir a formato mensual para el frontend
     resultado = []
     for registro in registros_peso:
         # Calcular meses atrás desde hoy
-        meses_atras = (datetime.now().date() - registro.fecha_registro).days // 30
+        meses_atras = (hoy - registro.fecha_registro).days // 30
         resultado.append({
             "mes": meses_atras,
             "peso": registro.peso_kg,
@@ -322,8 +325,9 @@ async def get_imc_history(
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
     # Obtener historial de IMC real de los últimos 6 meses
-    from datetime import datetime, timedelta
-    fecha_limite = datetime.now().date() - timedelta(days=180)  # 6 meses atrás
+    from app.core.utils import get_peru_date
+    hoy = get_peru_date()
+    fecha_limite = hoy - timedelta(days=180)  # 6 meses atrás
 
     registros_imc = db.query(HistorialIMC).filter(
         HistorialIMC.client_id == cliente_id,
@@ -338,14 +342,14 @@ async def get_imc_history(
             "mes": 0,
             "imc": round(imc_actual, 1),
             "categoria": categoria_actual,
-            "fecha": datetime.now().date().isoformat()
+            "fecha": hoy.isoformat()
         }]
 
     # Convertir a formato mensual para el frontend
     resultado = []
     for registro in registros_imc:
         # Calcular meses atrás desde hoy
-        meses_atras = (datetime.now().date() - registro.fecha_registro).days // 30
+        meses_atras = (hoy - registro.fecha_registro).days // 30
         resultado.append({
             "mes": meses_atras,
             "imc": registro.imc,

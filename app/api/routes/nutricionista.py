@@ -63,8 +63,9 @@ def get_assigned_patients(
     
     clients = query.all()
     
-    from datetime import datetime, timedelta
-    seven_days_ago = datetime.now() - timedelta(days=7)
+    from app.core.utils import get_peru_now
+    now = get_peru_now()
+    seven_days_ago = now - timedelta(days=7)
     
     result = []
     for c in clients:
@@ -88,10 +89,44 @@ def get_assigned_patients(
             "alerta": alerta_data.get("mensaje", ""),
             "alerta_nivel": alerta_data.get("nivel", "Bajo"),
             "gender": c.gender,
-            "is_validated": c.is_strategic_guide_validated
+            "is_validated": c.is_strategic_guide_validated,
+            "semana_status": _calcular_semana_status(c, db) # ✅ Nuevo: Estado semántico para el nutri
         })
     
     return result
+
+def _calcular_semana_status(c: Client, db: Session) -> str:
+    """
+    Determina el estado de la semana del paciente:
+    - 'validado': Plan aprobado después del último sábado.
+    - 'pendiente': Hizo check-in pero falta validación.
+    - 'falta_checkin': No ha registrado peso desde el último sábado.
+    """
+    from app.core.utils import get_peru_now
+    now = get_peru_now()
+    # Encontrar el último sábado (o hoy si es sábado)
+    # weekday(): 0=Mon, 5=Sat, 6=Sun
+    days_since_sat = (now.weekday() - 5) % 7
+    last_saturday = (now - timedelta(days=days_since_sat)).date()
+    
+    # 1. ¿Hizo check-in (registró peso) desde el último sábado?
+    hizo_checkin = any(r.fecha_registro >= last_saturday for r in c.historial_peso)
+    
+    if not hizo_checkin:
+        return "falta_checkin"
+        
+    # 2. ¿Tiene un plan validado después de ese check-in?
+    # Buscamos el plan más reciente
+    ultimo_plan = db.query(PlanNutricional).filter(
+        PlanNutricional.client_id == c.id
+    ).order_by(PlanNutricional.fecha_creacion.desc()).first()
+    
+    if ultimo_plan and ultimo_plan.status == "validado" and ultimo_plan.validated_at:
+        # Si la validación fue después del último sábado, está OK
+        if ultimo_plan.validated_at.date() >= last_saturday:
+            return "validado"
+            
+    return "pendiente"
 
 @router.get("/cliente/{id}/progreso")
 def get_patient_progress(
@@ -130,7 +165,7 @@ def get_patient_progress(
         "ai_strategic_focus": client.ai_strategic_focus,
         "recommended_foods": client.recommended_foods or [],
         "forbidden_foods": client.forbidden_foods or [],
-        "historial_paternal": historial_peso, # Correcting name if necessary or keeping original
+        "semana_status": _calcular_semana_status(client, db), # ✅ Sincronización para el expediente
         "historial_peso": historial_peso,
         "historial_imc": historial_imc,
         "alertas_salud": alertas,
@@ -220,9 +255,9 @@ def update_strategic_guide(
     if guide.medical_conditions is not None:
         client.medical_conditions = guide.medical_conditions
     
-    # ✅ Si se actualiza la guía, se marca como validada
-    client.is_strategic_guide_validated = True
-        
+    # ✅ (v80.0) No marcamos como validado globalmente al editar alimentos.
+    # La validación oficial es un proceso semanal por separado (validate_plan).
+         
     db.commit()
     return {"status": "success", "message": "Guía estratégica actualizada para la IA"}
 @router.post("/validar-plan/{id}")
@@ -232,6 +267,18 @@ def validate_plan(
     current_user: User = Depends(get_current_user)
 ):
     check_is_nutri(current_user)
+    
+    client = db.query(Client).filter(Client.id == id).first()
+    if not client:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+        
+    status_semana = _calcular_semana_status(client, db)
+    if status_semana == "falta_checkin":
+        raise HTTPException(
+            status_code=400, 
+            detail="No se puede validar el plan si el paciente aún no ha realizado su Check-in semanal."
+        )
+
     # Lógica para cambiar status de plan a 'validado'
     plan = db.query(PlanNutricional).filter(PlanNutricional.client_id == id).order_by(PlanNutricional.fecha_creacion.desc()).first()
     if plan:

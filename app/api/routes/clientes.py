@@ -552,36 +552,46 @@ def check_checkin_status(
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Verifica si el usuario necesita hacer el check-in del sábado"""
-    now = datetime.now()
-    # 0 = Lunes, 5 = Sábado, 6 = Domingo
-    is_saturday = now.weekday() == 5
+    """Verifica si el usuario necesita hacer el check-in del sábado (Perseverante)"""
+    from app.core.utils import get_peru_now
+    from app.models.historial import HistorialPeso
+    now = get_peru_now()
     
-    if not is_saturday:
-        return {"needed": False, "message": "Hoy no es día de check-in"}
-        
-    # Verificar si ya registró peso hoy
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    # 🕒 Encontrar el último sábado transcurrido (o hoy si es sábado)
+    # weekday(): 0=Mon, 5=Sat, 6=Sun
+    days_since_sat = (now.weekday() - 5) % 7
+    last_saturday = (now - timedelta(days=days_since_sat)).date()
+    
+    # 🔍 Verificar si ya registró peso desde el último sábado (inclusive)
     already_done = db.query(Client).filter(
         Client.id == current_user.id,
-        Client.historial_peso.any(fecha_registro >= today_start)
+        Client.historial_peso.any(HistorialPeso.fecha_registro >= last_saturday)
     ).first()
     
-    # Calcular días desde última actualización para el "Precision Meter"
-    last_weight = db.query(Client).filter(Client.id == current_user.id).first().historial_peso
+    # Calcular precisión basada en la última actualización real (para el meter)
+    last_record = db.query(HistorialPeso).filter(
+        HistorialPeso.client_id == current_user.id
+    ).order_by(HistorialPeso.fecha_registro.desc()).first()
+    
     days_since = 30 # Default si no hay historial
-    if last_weight:
-        ultimo = sorted(last_weight, key=lambda x: x.fecha_registro, reverse=True)[0]
-        days_since = (now - ultimo.fecha_registro).days
+    if last_record:
+        days_since = (now.date() - last_record.fecha_registro).days
         
     precision = 100
-    if days_since > 7: precision = 40
-    if days_since > 14: precision = 10
+    if days_since > 7: precision = 45
+    if days_since > 14: precision = 15
+
+    # El check-in es "necesario" si no se ha hecho desde el último sábado
+    # y hoy es sábado, domingo o lunes (ventana de calibración)
+    # O simplemente siempre que falte el del último sábado para máxima persistencia.
+    needed = not already_done
 
     return {
-        "needed": not already_done,
+        "needed": needed,
         "precision_score": precision,
-        "days_since_update": days_since
+        "days_since_update": days_since,
+        "last_saturday": last_saturday.strftime("%Y-%m-%d"),
+        "message": "¡Calibración pendiente!" if needed else "Plan calibrado"
     }
 
 @router.post("/checkin")
@@ -606,11 +616,12 @@ def process_checkin(
         cliente.activity_level = data.get("activity_level")
         
     # Registrar en historial
-    from app.models.nutricion import HistorialPeso
+    from app.models.historial import HistorialPeso
+    from app.core.utils import get_peru_date
     nuevo_registro = HistorialPeso(
         client_id=cliente.id,
         peso_kg=new_weight,
-        fecha_registro=datetime.now()
+        fecha_registro=get_peru_date()
     )
     db.add(nuevo_registro)
     
