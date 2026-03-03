@@ -1,7 +1,8 @@
 import firebase_admin
-from firebase_admin import credentials, auth
+from firebase_admin import credentials, auth, storage
 import os
 import json
+from app.core.config import settings
 
 def initialize_firebase():
     # 1. Intentamos obtener el JSON desde la variable de entorno
@@ -45,4 +46,25 @@ def verify_firebase_token(id_token: str):
         return decoded_token
     except Exception as e:
         print(f"Error al verificar token: {e}")
+        return None
+
+def upload_to_firebase(file_bytes: bytes, remote_path: str, content_type: str = "image/jpeg"):
+    """
+    Sube un archivo (como bytes) a Firebase Storage y retorna la URL pública válida.
+    """
+    try:
+        bucket = storage.bucket(settings.FIREBASE_STORAGE_BUCKET)
+        blob = bucket.blob(remote_path)
+        
+        # Subir bytes con metadatos de contenido
+        blob.upload_from_string(file_bytes, content_type=content_type)
+        
+        # Hacer el archivo público
+        blob.make_public()
+        
+        print(f"✅ Firebase: Archivo subido a {remote_path}")
+        return blob.public_url
+        
+    except Exception as e:
+        print(f"❌ Error al subir a Firebase Storage: {e}")
         return None

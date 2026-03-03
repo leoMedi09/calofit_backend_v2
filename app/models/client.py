@@ -34,6 +34,7 @@ class Client(Base):
     recommended_foods = Column(ARRAY(String), nullable=True, default=[]) # Lista Blanca
     forbidden_foods = Column(ARRAY(String), nullable=True, default=[])  # Lista Negra
     is_strategic_guide_validated = Column(Boolean, default=False) # ✅ Indica si el Nutri ya validó la estrategia
+    profile_picture_url = Column(String, nullable=True) # ✅ URL de la foto de perfil en Firebase Storage
     
     created_at = Column(DateTime, default=datetime.utcnow)
 

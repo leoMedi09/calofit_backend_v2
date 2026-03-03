@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, File, UploadFile
+from app.core.local_storage import local_storage
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -181,9 +182,34 @@ def obtener_perfil_cliente(
         height=current_user.height or 0.0,
         medical_conditions=current_user.medical_conditions or [],
         assigned_coach_id=current_user.assigned_coach_id,
-        assigned_nutri_id=current_user.assigned_nutri_id
+        assigned_nutri_id=current_user.assigned_nutri_id,
+        profile_picture_url=current_user.profile_picture_url # ✅ Añadido
     )
     return perfil_response
+
+@router.post("/perfil/foto")
+async def subir_foto_perfil_cliente(
+    file: UploadFile = File(...),
+    current_user: Client = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Sube una foto de perfil localmente para el cliente y actualiza la URL en la base de datos"""
+    if not isinstance(current_user, Client):
+        raise HTTPException(status_code=403, detail="Solo clientes pueden usar este endpoint para su propio perfil")
+        
+    if not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="El archivo debe ser una imagen")
+    
+    file_bytes = await file.read()
+    
+    # Guardar Localmente
+    relative_path = local_storage.save_file(file_bytes, file.filename)
+    public_url = local_storage.get_public_url(relative_path)
+    
+    current_user.profile_picture_url = public_url
+    db.commit()
+    
+    return {"message": "Foto de perfil actualizada exitosamente", "url": public_url}
 
 @router.post("/forgot-password/request")
 def solicitar_codigo(email: str, db: Session = Depends(get_db)):

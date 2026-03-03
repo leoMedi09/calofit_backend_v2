@@ -55,6 +55,7 @@ class UserUpdate(BaseModel):
     role_name: Optional[str] = None
     role_id: Optional[int] = None
     is_active: Optional[bool] = None
+    profile_picture_url: Optional[str] = None
 
 class UserResponse(BaseModel):
     id: int
@@ -64,6 +65,7 @@ class UserResponse(BaseModel):
     email: Optional[str] = None
     role_name: Optional[str] = "staff"
     is_active: bool = True
+    profile_picture_url: Optional[str] = None
     
     class Config:
         from_attributes = True

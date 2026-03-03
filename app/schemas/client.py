@@ -40,6 +40,7 @@ class ClientResponse(BaseModel):
     medical_conditions: List[str] = []
     assigned_coach_id: Optional[int]
     assigned_nutri_id: Optional[int]
+    profile_picture_url: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -56,6 +57,7 @@ class ClientUpdate(BaseModel):
     medical_conditions: Optional[List[str]] = None
     activity_level: Optional[str] = None
     goal: Optional[str] = None
+    profile_picture_url: Optional[str] = None
 
 class ChangePassword(BaseModel):
     new_password: str = Field(..., min_length=6)

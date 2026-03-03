@@ -1,5 +1,7 @@
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+import os
 from app.core.database import engine, Base
 from app.core import firebase
 
@@ -24,6 +26,14 @@ app.add_middleware(
 
 app.include_router(api_router)
 app.include_router(websocket_router, tags=["WebSockets"])
+
+# Crear directorio de subidas si no existe
+UPLOAD_DIR = "app/uploads"
+if not os.path.exists(UPLOAD_DIR):
+    os.makedirs(UPLOAD_DIR)
+
+# Servir archivos estáticos
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 # ✅ REMOVER REGISTRO DIRECTO - YA ESTÁ EN api_router
 # app.include_router(clientes_router, prefix="/clientes", tags=["clientes"])
