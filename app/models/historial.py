@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Date, Text, TIMESTAMP, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, Date, Text, TIMESTAMP, ForeignKey, Boolean, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.core.database import Base
@@ -98,3 +98,25 @@ class AlertaSalud(Base):
 
     # Relación con cliente
     cliente = relationship("Client", back_populates="alertas_salud")
+
+
+class SugerenciaGuardada(Base):
+    """
+    Sugerencias (recetas/rutinas) guardadas por el usuario desde el chat.
+    Permite al usuario guardar platos o ejercicios sugeridos por la IA
+    para prepararlos o hacerlos después.
+    """
+    __tablename__ = "sugerencias_guardadas"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
+    tipo = Column(String(20), nullable=False)        # 'comida' o 'ejercicio'
+    nombre = Column(String(255), nullable=False)
+    ingredientes = Column(JSON, nullable=True)       # Lista de ingredientes
+    preparacion = Column(JSON, nullable=True)         # Lista de pasos
+    macros = Column(String(255), nullable=True)       # "P: 25g | C: 40g | G: 12g | Cal: 380kcal"
+    nota = Column(Text, nullable=True)
+    completada = Column(Boolean, default=False)       # Ya la preparó/hizo
+    fecha_guardado = Column(TIMESTAMP, nullable=False, default=func.now())
+
+    cliente = relationship("Client", back_populates="sugerencias_guardadas")

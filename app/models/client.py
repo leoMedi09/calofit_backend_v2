@@ -47,6 +47,7 @@ class Client(Base):
     historial_imc = relationship("HistorialIMC", back_populates="cliente", cascade="all, delete-orphan")
     progreso_calorias = relationship("ProgresoCalorias", back_populates="cliente", cascade="all, delete-orphan")
     alertas_salud = relationship("AlertaSalud", back_populates="cliente", cascade="all, delete-orphan")
+    sugerencias_guardadas = relationship("SugerenciaGuardada", back_populates="cliente", cascade="all, delete-orphan")
     
     # Relaciones para sistema de aprendizaje de preferencias
     preferencias_alimentos = relationship("PreferenciaAlimento", back_populates="cliente", cascade="all, delete-orphan")

@@ -158,22 +158,40 @@ def get_patient_progress(
         "fecha": a.fecha_deteccion
     } for a in client.alertas_salud]
 
+    # ✨ Sincronización Metabólica (v80.0)
+    # Proporcionamos la misma base que ve el cliente en su dashboard
+    tmb_estimada = calcular_metabolismo_basal(client)
+    
+    # Calorias ajustadas según objetivo
+    calorias_ajustadas = tmb_estimada
+    if client.goal == "Perder peso":
+        calorias_ajustadas *= 0.85
+    elif client.goal == "Ganar masa":
+        calorias_ajustadas *= 1.1
+
+    recomendacion_ia = obtener_macros_desglosados(calorias_ajustadas, client.goal)
+
     return {
-        "client_id": client.id,
-        "full_name": f"{client.first_name} {client.last_name_paternal}",
-        "medical_conditions": client.medical_conditions or [],
-        "ai_strategic_focus": client.ai_strategic_focus,
-        "recommended_foods": client.recommended_foods or [],
-        "forbidden_foods": client.forbidden_foods or [],
-        "semana_status": _calcular_semana_status(client, db), # ✅ Sincronización para el expediente
+        "id": client.id,
+        "nombre": f"{client.first_name} {client.last_name_paternal} {client.last_name_maternal}", # Adjusted to match existing full_name format
+        "objetivo": client.goal,
+        "focus_objetivo": client.ai_strategic_focus, # Renamed from client.focus_objetivo to client.ai_strategic_focus
+        "semana_status": _calcular_semana_status(client, db),
         "historial_peso": historial_peso,
         "historial_imc": historial_imc,
         "alertas_salud": alertas,
-        "current_weight": client.weight,
-        "current_height": client.height,
-        "goal": client.goal,
-        "gender": client.gender,
-        "is_validated": client.is_strategic_guide_validated
+        # Guía Estratégica (Misión Semanal)
+        "ai_strategic_focus": client.ai_strategic_focus,
+        "is_strategic_guide_validated": client.is_strategic_guide_validated,
+        # Sincronización v80.0
+        "metabolismo_estimado": {
+            "tmb": round(tmb_estimada),
+            "calorias_objetivo": recomendacion_ia["calorias"],
+            "proteinas_g": recomendacion_ia["proteinas_g"],
+            "carbohidratos_g": recomendacion_ia["carbohidratos_g"],
+            "grasas_g": recomendacion_ia["grasas_g"],
+            "distribucion": recomendacion_ia["pct"]
+        }
     }
 
 @router.get("/cliente/{id}/sugerir-estrategia")

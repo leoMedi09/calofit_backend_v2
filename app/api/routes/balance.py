@@ -67,7 +67,7 @@ async def obtener_balance_hoy(
         objetivo_map = {"Perder peso": "perder", "Mantener peso": "mantener", "Ganar masa": "ganar"}
         objetivo = objetivo_map.get(cliente.goal, "mantener")
         
-        objetivo_diario = ia_engine.calcular_requerimiento(
+        objetivo_diario, proteinas_objetivo, carbohidratos_objetivo, grasas_objetivo = ia_engine.calcular_macros_completos(
             genero=genero, edad=edad, peso=cliente.weight, talla=cliente.height,
             nivel_actividad=nivel_actividad, objetivo=objetivo
         )
@@ -108,7 +108,10 @@ async def obtener_balance_hoy(
             "objetivo_diario": objetivo_diario,
             "proteinas_g": progreso_hoy.proteinas_consumidas if progreso_hoy else 0.0,
             "carbohidratos_g": progreso_hoy.carbohidratos_consumidos if progreso_hoy else 0.0,
-            "grasas_g": progreso_hoy.grasas_consumidas if progreso_hoy else 0.0
+            "grasas_g": progreso_hoy.grasas_consumidas if progreso_hoy else 0.0,
+            "proteinas_objetivo": proteinas_objetivo if 'proteinas_objetivo' in locals() else (plan_hoy.proteinas_g if 'plan_hoy' in locals() and plan_hoy else 150.0),
+            "carbohidratos_objetivo": carbohidratos_objetivo if 'carbohidratos_objetivo' in locals() else (plan_hoy.carbohidratos_g if 'plan_hoy' in locals() and plan_hoy else 250.0),
+            "grasas_objetivo": grasas_objetivo if 'grasas_objetivo' in locals() else (plan_hoy.grasas_g if 'plan_hoy' in locals() and plan_hoy else 60.0)
         },
         "alimentos_registrados": [
             {
@@ -116,7 +119,13 @@ async def obtener_balance_hoy(
                 "nombre": alimento.alimento.capitalize(),
                 "frecuencia_total": alimento.frecuencia,
                 "puntuacion": round(alimento.puntuacion, 2),
-                "hora_registro": alimento.ultima_vez.strftime("%H:%M:%S")
+                "hora_registro": alimento.ultima_vez.strftime("%H:%M:%S"),
+                "macros": {
+                    "calorias": alimento.calorias or 0,
+                    "proteinas": alimento.proteinas or 0,
+                    "carbohidratos": alimento.carbohidratos or 0,
+                    "grasas": alimento.grasas or 0
+                }
             }
             for alimento in alimentos_hoy
         ],
@@ -125,7 +134,8 @@ async def obtener_balance_hoy(
                 "id": ejercicio.id,
                 "nombre": ejercicio.ejercicio.capitalize(),
                 "frecuencia_total": ejercicio.frecuencia,
-                "hora_registro": ejercicio.ultima_vez.strftime("%H:%M:%S")
+                "hora_registro": ejercicio.ultima_vez.strftime("%H:%M:%S"),
+                "calorias_quemadas": ejercicio.calorias_quemadas or 0
             }
             for ejercicio in ejercicios_hoy
         ]

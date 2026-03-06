@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.api.routes.auth import get_current_user
-from app.services.copiloto_service import copiloto_service
+from app.services.nutricionista_service import nutricionista_ia_service
+from app.services.admin_service import admin_ia_service
 from pydantic import BaseModel
 import traceback
 
@@ -19,29 +20,36 @@ async def consultar_copiloto(
     current_user = Depends(get_current_user)
 ):
     """
-    Endpoint dedicado para el Copiloto del Staff.
-    Protegido para roles admin y nutricionista.
+    Endpoint único para el Staff (Nutri/Admin). 
+    Enruta automáticamente al servicio correspondiente según el rol.
     """
-    # 🛡️ Seguridad: Solo Staff
     user_role = str(current_user.role_name).lower().strip() if hasattr(current_user, 'role_name') else "client"
-    print(f"🕵️ DEBUG: Usuario '{current_user.email}' intentando usar Copiloto. Rol detectado: '{user_role}'")
     
-    if user_role not in ["admin", "nutricionista", "coach"]:
-        raise HTTPException(
-            status_code=403, 
-            detail=f"Acceso denegado: El rol '{user_role}' no tiene permisos clínicos."
-        )
+    print(f"🩺 >>> CONSULTA COPILOTO STAFF <<<")
+    print(f"🩺 Usuario: {current_user.email} | Rol: {user_role}")
 
     try:
-        print(f"🩺 >>> CONSULTA COPILOTO CLÍNICO <<<")
-        print(f"🩺 Staff: {current_user.email} (Rol: {current_user.role_name})")
-        
-        resultado = await copiloto_service.consultar_copiloto(
-            mensaje=request.mensaje,
-            db=db,
-            current_user=current_user,
-            historial=request.historial
-        )
+        if user_role == "admin":
+             # Usar Servicio de Administración Gerencial
+             resultado = await admin_ia_service.consultar(
+                 mensaje=request.mensaje,
+                 db=db,
+                 current_user=current_user,
+                 historial=request.historial
+             )
+        elif user_role in ["nutricionista", "coach"]:
+             # Usar Servicio de Nutrición Clínica
+             resultado = await nutricionista_ia_service.consultar(
+                 mensaje=request.mensaje,
+                 db=db,
+                 current_user=current_user,
+                 historial=request.historial
+             )
+        else:
+            raise HTTPException(
+                status_code=403, 
+                detail=f"Acceso denegado: El rol '{user_role}' no tiene permisos para el Copiloto Staff."
+            )
         
         return resultado
 

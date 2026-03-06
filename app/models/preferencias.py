@@ -16,6 +16,13 @@ class PreferenciaAlimento(Base):
     alimento = Column(String(200), nullable=False)
     frecuencia = Column(Integer, default=1)
     puntuacion = Column(Float, default=1.0)
+    
+    # Nuevas columnas para tracking de macros en balance (v80.0)
+    calorias = Column(Float, nullable=True, default=0.0)
+    proteinas = Column(Float, nullable=True, default=0.0)
+    carbohidratos = Column(Float, nullable=True, default=0.0)
+    grasas = Column(Float, nullable=True, default=0.0)
+    
     ultima_vez = Column(TIMESTAMP, server_default=func.now())
     created_at = Column(TIMESTAMP, server_default=func.now())
 
@@ -35,6 +42,10 @@ class PreferenciaEjercicio(Base):
     ejercicio = Column(String(200), nullable=False)
     frecuencia = Column(Integer, default=1)
     puntuacion = Column(Float, default=1.0)
+    
+    # Nuevas columnas para tracking de quemadas en balance (v80.0)
+    calorias_quemadas = Column(Float, nullable=True, default=0.0)
+    
     ultima_vez = Column(TIMESTAMP, server_default=func.now())
     created_at = Column(TIMESTAMP, server_default=func.now())
 

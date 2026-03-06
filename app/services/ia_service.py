@@ -106,6 +106,13 @@ class IAService:
         "poro": "cebolla blanca", "apio": "apio", "coliflor": "coliflor", "vainitas": "vainita", "pimiento": "pimiento", "zapallito": "zapallito italiano"
     }
 
+    CONOCIMIENTO_TECNICO = {
+        "dominada": "En la dominada, el cuerpo (la barbilla) es el que sube a la barra fija. No se 'baja la barra' hacia el cuerpo.",
+        "remo": "En el remo, el peso se tracciona hacia el abdomen manteniendo la espalda recta.",
+        "sentadilla": "Mantener la espalda neutra y bajar la cadera rompiendo el paralelo.",
+        "flexion": "Mantener el core firme y bajar el pecho cerca del suelo."
+    }
+
     PALABRAS_RUIDO = [
         "picado", "trozos", "cortada", "pelada", "fresca", "fresco", "al gusto", 
         "opcional", "maduros", "verdes", "frescos", "limpio", "limpia", "frescas",
@@ -117,7 +124,7 @@ class IAService:
 
     # Pre-compilar regex para máximo rendimiento en bucles
     PATRON_INGREDIENTE = re.compile(
-        r'(?:^|\r?\n)\s*(?:[-\*•]\s*)?(?:(\d+(?:[.,/]\d+)?)\s*(?:(g|gr|gramos|taza|tazas|unidad|unidades|piezas|pieza|cucharada|cucharadas|cucharadita|cucharaditas|oz|ml|l|kg)\b)?\s*(?:de\s+)?)?([^\n]+)',
+        r'(?:^|\r?\n)\s*(?:[-\*•]\s*)?(?:(\d+(?:[.,/]\d+)?)\s*(?:(g|gr|gramos|taza|tazas|unidad|unidades|piezas|pieza|cucharada|cucharadas|cucharadita|cucharaditas|oz|ml|l|kg|porción|porcion|plato|rodaja|filete|vaso|copa|puñado)\b)?\s*(?:de\s+)?)?([^\n]+)',
         re.MULTILINE | re.IGNORECASE
     )
 
@@ -1028,12 +1035,14 @@ class IAService:
                 
                 if es_gym:
                     muestra_ej = gold_standard[:4] + otros[:2] # Reducido
-                    texto_extra += "\n### CONTEXTO GIMNASIO ACTIVO: Sugiere máquinas, pesas o cardio indoor. PROHIBIDO: Fútbol/Pichanga."
+                    texto_extra += "\n### CONTEXTO GIMNASIO ACTIVO: Sugiere máquinas, pesas o cardio indoor."
                 elif es_casa:
                     muestra_ej = gold_standard[:4] + peruanos[:1] # Reducido
                     texto_extra += "\n### CONTEXTO CASA ACTIVO: Sugiere ejercicios con peso corporal o espacio reducido."
                 else:
                     muestra_ej = peruanos[:2] + gold_standard[:3] # Reducido
+                
+                texto_extra += "\n🚨 REGLA DE DEPORTES: Al pedir 'rutina' o 'ejercicio', PROHIBIDO sugerir deportes (Vóley, Fútbol, Básquet, etc). DISEÑA RUTINAS DE FITNESS (Gimnasio o Casa)."
                 
                 # ESCAPAR LLAVES PARA EVITAR ERROR EN F-STRING
                 ejercicios_str = json.dumps(muestra_ej, ensure_ascii=False)
@@ -1139,13 +1148,13 @@ Toda respuesta DEBE comenzar con una etiqueta de intención exacta. NO USES OTRA
 - SI el usuario menciona: "receta", "plato", "comida", "almuerzo", "cena", "desayuno" -> USA [CALOFIT_INTENT: ITEM_RECIPE]
 
 ### 🚨 PROTOCOLO DE MÚLTIPLES CARTAS (CRÍTICO):
-1. **SI EL USUARIO PIDE "OPCIONES" (Plural):**
-   - GENERA EXACTAMENTE 2 opciones distintas.
+1. **SI EL USUARIO PIDE "OPCIONES", "QUÉ COMO AHORA" O "QUÉ PUEDO COMER":**
+   - GENERA EXACTAMENTE 2 a 3 opciones distintas.
    - ⚠️ REGLA DE ORO: CADA OPCIÓN DEBE SER UN BLOQUE INDEPENDIENTE FUERA DEL CHAT.
    - PRIMERO: Saluda y presenta las opciones con un bloque [CALOFIT_INTENT: CHAT].
-     Ejemplo: [CALOFIT_INTENT: CHAT] ¡Claro Leonardo! Aquí tienes 2 excelentes opciones para tu cena baja en calorías: [/CALOFIT_INTENT: CHAT]
+     Ejemplo: [CALOFIT_INTENT: CHAT] ¡Claro Leonardo! Aquí tienes excelentes opciones para tu comida: [/CALOFIT_INTENT: CHAT]
    
-   - LUEGO: Genera las tarjetas (Exactamente 2).
+   - LUEGO: Genera las tarjetas (Exactamente 2 o 3 opciones). El nombre del plato debe estar claro en el Header.
      ⚠️ ESTÁ ABSOLUTAMENTE PROHIBIDO PONER LA LISTA DE INGREDIENTES DENTRO DEL BLOQUE CHAT.
    
    - EJEMPLO OBLIGATORIO DEL FORMATO:
@@ -1643,17 +1652,39 @@ Toda respuesta DEBE comenzar con una etiqueta de intención exacta. NO USES OTRA
                 equiv_g = cant_visual
                 if unidad in ["", "unidad", "unidades", "pieza", "piezas"]:
                     if any(x in n_limpio for x in ["manzana", "pera", "plátano", "huevo"]): equiv_g = cant_visual * 150
+                    else: equiv_g = cant_visual * 200 # Fallback general para unidad de algo desconocido
                 
-                if unidad in ['taza', 'tazas']: equiv_g = cant_visual * 200
+                if unidad in ['taza', 'tazas', 'vaso']: equiv_g = cant_visual * 200
                 elif unidad in ['cucharada', 'cda']: equiv_g = cant_visual * 15
                 elif unidad in ['cucharadita', 'cdta']: equiv_g = cant_visual * 5
-                elif unidad in ['unidad', 'unidades', 'pieza', 'piezas']: equiv_g = cant_visual * 150
+                elif unidad in ['unidad', 'unidades', 'pieza', 'piezas', 'filete', 'rodaja']: equiv_g = cant_visual * 150
+                elif unidad in ['porción', 'porcion', 'plato']: equiv_g = cant_visual * 350
+                elif unidad in ['puñado']: equiv_g = cant_visual * 30
+                
+                # Si sigue siendo muy pequeño (ej: "1" sin unidad clara)
+                if equiv_g < 10 and unidad not in ['g', 'ml', 'gr', 'gramos', 'cucharada', 'cda', 'cucharadita', 'cdta', 'oz', 'kg', 'l']:
+                    equiv_g = cant_visual * 200
                 
                 f_est = equiv_g / 100.0
-                cals_item = 45.0 * f_est
-                p_item = 1.2 * f_est
-                c_item = 9.0 * f_est
-                g_item = 0.4 * f_est
+                
+                # Estimación de macros básica empírica
+                cals_100 = 120.0
+                p_100 = 5.0
+                c_100 = 15.0
+                g_100 = 4.0
+                
+                if any(x in n_limpio for x in ["carne", "pollo", "pescado", "res", "cerdo"]):
+                    cals_100 = 160.0; p_100 = 20.0; c_100 = 0.0; g_100 = 8.0
+                elif any(x in n_limpio for x in ["arroz", "quinoa", "quinua", "fideo", "pasta", "pan"]):
+                    cals_100 = 250.0; p_100 = 6.0; c_100 = 50.0; g_100 = 2.0
+                elif any(x in n_limpio for x in ["ensalada", "verdura", "vegetal"]):
+                    cals_100 = 45.0; p_100 = 1.2; c_100 = 9.0; g_100 = 0.4
+                    
+                cals_item = cals_100 * f_est
+                p_item = p_100 * f_est
+                c_item = c_100 * f_est
+                g_item = g_100 * f_est
+
         
         if not (es_sal_o_especia or es_saborizante) and cals_item < 1.0:
             cals_item = 1.0
@@ -1790,7 +1821,11 @@ Toda respuesta DEBE comenzar con una etiqueta de intención exacta. NO USES OTRA
                     c_final = c_final * factor_est
 
             # v70.3: Limpieza HEURÍSTICA de nombres (eliminar macros repetidos que inyecta la IA)
-            linea_limpia = it["nombre_raw"].split('(')[0].split(':')[0].split(',')[0].split('-')[0].strip()
+            linea_limpia = it["nombre_raw"].split('(')[0].split(':')[0].split(',')[0].strip()
+            linea_limpia = re.sub(r'^[-\*•]\s*', '', linea_limpia) # Limpiar viñeta inicial si quedó
+            linea_limpia = re.split(r'\s+-\s+', linea_limpia)[0].strip() # Limpiar guión medio como separador
+            if not linea_limpia and it["nombre_raw"]:
+                linea_limpia = it["nombre_raw"].split('(')[0].strip() # Fallback si limpió demasiado
             
             # v70.2: Inyectar solo calorías en la línea para el diseño simplificado solicitado por el usuario
             if not it["es_0"]:

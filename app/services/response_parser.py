@@ -179,7 +179,7 @@ def parsear_respuesta_para_frontend(texto_principal: str, mensaje_usuario: str =
                     "preparacion": pasos_clean if tipo == "comida" else [],
                     "tecnica": pasos_clean if tipo == "ejercicio" else [],
                     "instrucciones": pasos_clean if tipo == "ejercicio" else [],
-                    "macros": msg_stats_clean if tipo == "comida" else "",
+                    "macros": msg_stats_clean,
                     "gasto_calorico_estimado": msg_stats_clean if tipo == "ejercicio" else "",
                     "nota": footer.group(1).strip() if footer else ""
                 }
