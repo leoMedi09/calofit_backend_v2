@@ -32,6 +32,7 @@ from app.models.nutricion import PlanNutricional, PlanDiario
 from app.models.historial import ProgresoCalorias, AlertaSalud
 from app.models.preferencias import PreferenciaAlimento, PreferenciaEjercicio
 from app.services.ia_service import ia_engine
+from app.services.ml_service import ml_perfil, ml_recomendador          # ML #2 (Perfil) y ML #3 (Recomendador)
 from app.services.response_parser import parsear_respuesta_para_frontend
 from app.core.utils import parsear_macros_de_texto, get_peru_date
 from app.core.cache import set_consulta_cached, get_consulta_cached, add_user_recent_meal, get_user_recent_meals
@@ -114,20 +115,22 @@ class AsistenteService:
 
         async def _analizar_salud_background():
             try:
-                resultado = await self.ia.identificar_intencion_salud(mensaje)
-                if resultado and resultado.get("tiene_alerta"):
+                # identificar_intencion_salud es SÍNCRONO (devuelve str, no coroutine)
+                intencion_salud = self.ia.identificar_intencion_salud(mensaje)
+                if intencion_salud == "ALERT":
                     nueva_alerta = AlertaSalud(
                         client_id=perfil.id,
-                        tipo=resultado.get("tipo", "otro"),
-                        descripcion=resultado.get("descripcion_resumida", mensaje),
-                        severidad=resultado.get("severidad", "bajo"),
+                        tipo="sintoma",
+                        descripcion=mensaje[:200],
+                        severidad="medio",
                         estado="pendiente"
                     )
                     db.add(nueva_alerta)
                     db.commit()
-                    print(f"🚨 Alerta de salud guardada en background: {resultado.get('tipo')}")
+                    print(f"🚨 Alerta de salud guardada en background para: {perfil.first_name}")
             except Exception as e:
                 print(f"⚠️ Error en análisis de salud background: {e}")
+
 
         if not es_saludo:
             asyncio.create_task(_analizar_salud_background())
@@ -148,11 +151,22 @@ class AsistenteService:
         if override_ia:
             respuesta_ia = override_ia
         else:
-            respuesta_ia = await self.ia.asistir_cliente(
-                contexto=contexto_asistente,
-                mensaje_usuario=mensaje,
-                historial=historial,
-                tono_aplicado=tono_instruccion
+            # Insertar historial reciente dentro del prompt (txt) si existe
+            ctx_historial = ""
+            if historial:
+                ctx_historial = "\n\nHISTORIAL RECIENTE:\n" + "\n".join(
+                    f"{m.get('role','user').upper()}: {m.get('content', '')}"
+                    for m in historial[-4:]
+                )
+
+            prompt_final = (
+                contexto_asistente
+                + ctx_historial
+                + f"\n\nMENSAJE DEL USUARIO: {mensaje}"
+            )
+            respuesta_ia = await self.ia._llamar_groq(
+                prompt=prompt_final,
+                max_tokens=1200,
             )
 
         # 10. Parsear respuesta para Frontend
@@ -671,6 +685,75 @@ class AsistenteService:
                 f"Luego pregunta qué necesita: ¿registrar comida, consultar algo, o ver opciones para su próxima comida?"
             )
 
+        # ═══ ML #2: Perfil de Adherencia ═══
+        # Predice el perfil del cliente con datos reales de su progreso
+        # y genera el bloque de tono personalizado para el LLM.
+        bloque_perfil_ml = ""
+        try:
+            nivel_map = {"Sedentario": 1.2, "Ligero": 1.375, "Moderado": 1.55,
+                         "Intenso": 1.725, "Muy intenso": 1.9}
+            registros_sem = min(7, max(1, int(adherencia_pct / 15)))  # estimación desde adherencia
+            genero_str = "M" if getattr(perfil, 'gender', 'M') == "M" else "F"
+            perfil_ml, conf_ml = ml_perfil.predecir_perfil_desde_progreso(
+                registros_semana = registros_sem,
+                adherencia_pct   = adherencia_pct,
+                edad             = edad,
+                genero           = genero_str,
+                peso             = float(perfil.weight or 70),
+                altura           = float(perfil.height or 170),
+            )
+            tono_perfil = ml_perfil.get_tono_asistente(perfil_ml)
+            bloque_perfil_ml = (
+                f"\n\nPERFIL ML DEL CLIENTE ({perfil_ml}, confianza {conf_ml}%): "
+                f"{tono_perfil}"
+            )
+        except Exception:
+            bloque_perfil_ml = ""
+
+        # ═══ ML #3: Recomendador KNN de Alimentos Peruanos ═══
+        # Si al usuario le faltan calorías significativas (> 100 kcal), usamos 
+        # el KNN para encontrar los alimentos peruanos óptimos que cubren el déficit.
+        bloque_recomendacion_ml = ""
+        if restantes > 100:
+            try:
+                # Calculamos el déficit de proteínas, carbos y grasas aproximado
+                # basándonos en la distribución de la meta actual.
+                prote_meta = plan_hoy_data.get("proteinas_g", 0)
+                carbo_meta = plan_hoy_data.get("carbohidratos_g", 0)
+                grasa_meta = plan_hoy_data.get("grasas_g", 0)
+                
+                # Estimación simple del consumo real de macros (asumiendo distribución equilibrada)
+                # En un caso ideal se tomarían de los ProgresoCalorias detallados.
+                pct_consumido = (consumo_real / calorias_meta) if calorias_meta > 0 else 0
+                prote_faltante = max(0, prote_meta - (prote_meta * pct_consumido))
+                carbo_faltante = max(0, carbo_meta - (carbo_meta * pct_consumido))
+                grasa_faltante = max(0, grasa_meta - (grasa_meta * pct_consumido))
+
+                # Obtener Top 3 del KNN
+                recos = ml_recomendador.obtener_recomendaciones(
+                    calorias_faltantes=restantes,
+                    prote_faltante=prote_faltante,
+                    carbo_faltante=carbo_faltante,
+                    grasa_faltante=grasa_faltante,
+                    n_recomendaciones=3
+                )
+                
+                if recos:
+                    lista_recos = ""
+                    for i, r in enumerate(recos):
+                        lista_recos += f"{i+1}. {r['alimento']} ({r['calorias_100g']} kcal, {r['proteina_100g']}g proteína por 100g) [Similitud: {r['similitud']}%]\n"
+                    
+                    bloque_recomendacion_ml = (
+                        f"\n\nSUGERENCIAS DEL MODELO ML KNN (BASADO EN DÉFICIT ACTUAL):\n"
+                        f"Para cubrir las {restantes:.0f} kcal restantes, el algoritmo recomienda "
+                        f"los siguientes alimentos peruanos óptimos:\n{lista_recos}"
+                        f"INSTRUCCIÓN: Si el cliente pide qué comer, OBLIGATORIAMENTE incorpora "
+                        f"estos alimentos en tus recetas propuestas, porque son los que matemáticamente le ayudan más."
+                    )
+            except Exception as e:
+                print(f"Error en ML Recomendador: {e}")
+                bloque_recomendacion_ml = ""
+
         return (
             f"Eres el coach de {perfil.first_name}. "
             f"FOCO ESTRATÉGICO (Orden del Nutricionista): {foco}. "
@@ -682,6 +765,8 @@ class AsistenteService:
             f"CONDICIONES MÉDICAS/LESIONES: {texto_condiciones}. "
             f"{bloque_hora}"
             f"{bloque_favoritos}"
+            f"{bloque_perfil_ml}"
+            f"{bloque_recomendacion_ml}"
             f"\nSTATUS DEL DÍA: "
             f"Meta: {calorias_meta} kcal. Consumido: {consumo_real} kcal. Restante: {restantes} kcal. "
             f"Adherencia: {adherencia_pct:.0f}%, Progreso: {progreso_pct:.0f}%. "
@@ -694,8 +779,10 @@ class AsistenteService:
             f"\n5. En MODO RECIPE, CADA ÍTEM en 'ingredientes' DEBE incluir sus calorías estimadas al lado (ej: '100g de Pollo (165 kcal)')."
             f"\n6. REGLA DE CONSISTENCIA: La preparación (pasos) SOLO debe usar ingredientes listados en la sección de ingredientes. NO inventes ingredientes nuevos en los pasos."
             f"\n7. RESTRICCIONES CRÍTICAS: NUNCA sugieras alimentos listados en ALIMENTOS PROHIBIDOS o ALERGIAS. Al sugerir rutinas de ejercicio, ADAPTA el entrenamiento para NO AFECTAR lesiones. PROHIBIDO sugerir deportes (fútbol, vóley, básquet, etc.) como rutina; DISEÑA RUTINAS DE FITNESS (Gimnasio o Casa)."
+            f"\n8. REGLA DE MACROS OBLIGATORIA: En MODO RECIPE, al final de cada opción/receta DEBES incluir una línea de macros EXACTA con el formato: 'macros: Xcal, Xg proteína, Xg carbohidratos, Xg grasa'. Calcula sumando los ingredientes. Esta línea ES CRÍTICA para el registro consistente."
             f"{bloque_saludo}"
         )
+
 
     def _procesar_secciones_comida(self, respuesta_estructurada, perfil):
         """Cachea secciones de comida para consistencia de registro."""
@@ -704,24 +791,50 @@ class AsistenteService:
                 continue
 
             macros_parsed = parsear_macros_de_texto(seccion.get("macros") or "")
-            if not macros_parsed:
-                macros_parsed = {"calorias": 0, "proteinas_g": 0, "carbohidratos_g": 0, "grasas_g": 0}
+
+            # Fallback: si los macros no se encontraron en la línea "macros:",
+            # sumar las calorías mencionadas en cada ingrediente (formato "xxx kcal")
+            if not macros_parsed or macros_parsed.get("calorias", 0) == 0:
+                cal_suma = 0.0
+                prot_suma = 0.0
+                for ing in seccion.get("ingredientes", []):
+                    # Detectar patrones "NNN kcal" o "NNN cal"
+                    m_cal  = re.search(r'(\d+(?:\.\d+)?)\s*kcal', ing, re.IGNORECASE)
+                    m_prot = re.search(r'(\d+(?:\.\d+)?)\s*g\s*prote', ing, re.IGNORECASE)
+                    if m_cal:
+                        cal_suma  += float(m_cal.group(1))
+                    if m_prot:
+                        prot_suma += float(m_prot.group(1))
+                if cal_suma > 0:
+                    # Estimar carbs y grasas desde la calificación de proteínas
+                    gras_estimada = cal_suma * 0.25 / 9
+                    carb_estimada = (cal_suma - (prot_suma * 4) - (gras_estimada * 9)) / 4
+                    macros_parsed = {
+                        "calorias":       round(cal_suma, 1),
+                        "proteinas_g":    round(prot_suma, 1),
+                        "carbohidratos_g": round(max(0, carb_estimada), 1),
+                        "grasas_g":       round(gras_estimada, 1),
+                    }
+                else:
+                    macros_parsed = {"calorias": 0, "proteinas_g": 0, "carbohidratos_g": 0, "grasas_g": 0}
 
             nombre_bruto = seccion.get("nombre") or "Comida"
             nombre_limpio = re.sub(r'\[.*?\]', '', nombre_bruto).split('[')[0].strip()
 
             consulta_id = str(uuid.uuid4())
             payload = {
-                "calorias": round(macros_parsed["calorias"], 1),
-                "proteinas_g": round(macros_parsed["proteinas_g"], 1),
+                "calorias":        round(macros_parsed["calorias"], 1),
+                "proteinas_g":     round(macros_parsed["proteinas_g"], 1),
                 "carbohidratos_g": round(macros_parsed["carbohidratos_g"], 1),
-                "grasas_g": round(macros_parsed["grasas_g"], 1),
-                "nombre": nombre_limpio,
-                "ingredientes": seccion.get("ingredientes", [])
+                "grasas_g":        round(macros_parsed["grasas_g"], 1),
+                "nombre":          nombre_limpio,
+                "ingredientes":    seccion.get("ingredientes", [])
             }
             set_consulta_cached(consulta_id, payload)
             seccion["consulta_id"] = consulta_id
+            seccion["macros_cache"] = f"{payload['calorias']} kcal | P:{payload['proteinas_g']}g C:{payload['carbohidratos_g']}g G:{payload['grasas_g']}g"
             add_user_recent_meal(perfil.id, payload)
+
 
     def _clasificar_intencion_respuesta(self, respuesta_estructurada, mensaje):
         """Clasifica si la respuesta debe mostrarse como tarjeta o texto plano."""

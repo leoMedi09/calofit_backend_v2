@@ -17,10 +17,10 @@ router = APIRouter()
 
 def check_is_nutri(current_user: User):
     role = str(getattr(current_user, "role_name", "")).lower()
-    if role not in ["nutricionista", "nutritionist", "admin", "administrador"]:
+    if role not in ["nutricionista", "nutritionist", "admin", "administrador", "coach", "entrenador"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Operación permitida solo para Nutricionistas o Administradores"
+            detail="Operación permitida solo para Staff (Nutricionistas, Coaches o Admin)"
         )
     return current_user
 
@@ -56,9 +56,11 @@ def get_assigned_patients(
 ):
     check_is_nutri(current_user)
     
-    # Si es Admin, ve todos los clientes. Si es Nutri, solo los suyos.
+    # Si es Admin o Coach, ve todos los clientes. Si es Nutri, solo los suyos.
     query = db.query(Client)
     role = str(getattr(current_user, "role_name", "")).lower()
+    
+    # 🏃‍♂️ CAMBIO SOLICITADO: Los coaches pueden ver a todos para apoyarse entre sí
     if role in ["nutricionista", "nutritionist"]:
         query = query.filter(Client.assigned_nutri_id == current_user.id)
     
@@ -85,7 +87,8 @@ def get_assigned_patients(
             "email": c.email,
             "goal": c.goal,
             "weight": c.weight,
-            "nutri_id": c.assigned_nutri_id, # ✅ Agregamos el ID para que Admin sepa si ya tiene uno
+            "nutri_id": c.assigned_nutri_id,
+            "coach_id": c.assigned_coach_id,
             "adherencia": adherencia,
             "alerta": alerta_data.get("mensaje", ""),
             "alerta_nivel": alerta_data.get("nivel", "Bajo"),
@@ -141,7 +144,8 @@ def get_patient_progress(
     if not client:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
         
-    # Verificar que el nutri tenga acceso
+    # Verificar que el nutri/coach tenga acceso
+    # (El coach tiene permiso de lectura total en el gimnasio)
     if current_user.role_name.upper() in ["NUTRICIONISTA", "NUTRITIONIST"] and client.assigned_nutri_id != current_user.id:
         raise HTTPException(status_code=403, detail="No tienes permiso para ver este paciente")
 

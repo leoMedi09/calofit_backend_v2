@@ -6,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from app.core.database import get_db
 from app.models.client import Client
 from app.models.user import User
-from app.schemas.client import ClientCreate, ClientUpdate, ClientResponse, ChangePassword
+from app.schemas.client import ClientCreate, ClientUpdate, ClientResponse, ChangePassword, AdminCreateClient
 from app.schemas.dieta import ClientResponseConDieta, RecomendacionDietaCompleta
 from app.core.security import security
 from app.api.routes.auth import get_current_user, get_current_staff
@@ -19,6 +19,50 @@ from app.core.firebase import auth as firebase_admin_auth
 
 
 router = APIRouter()
+
+
+@router.post("/admin-crear", summary="Admin crea un cliente con credenciales mínimas")
+def admin_crear_cliente(
+    data: AdminCreateClient,
+    db: Session = Depends(get_db),
+    current_staff: User = Depends(get_current_staff),
+):
+    """
+    Endpoint exclusivo para Admins.
+    Crea un cliente solo con email + contraseña + firebase_uid.
+    El cliente completará su perfil en el Onboarding al primer login.
+    """
+    # Solo admins pueden hacer esto
+    if not (current_staff.role and current_staff.role.name.lower() in ['admin', 'superadmin']):
+        raise HTTPException(status_code=403, detail="Solo los administradores pueden crear clientes")
+
+    existe = db.query(Client).filter(Client.email == data.email).first()
+    if existe:
+        raise HTTPException(status_code=400, detail="Este correo ya está registrado")
+
+    nuevo = Client(
+        first_name="",           # Se completará en el Onboarding
+        last_name_paternal="",
+        last_name_maternal="",
+        email=data.email,
+        hashed_password=security.hash_password(data.password),
+        flutter_uid=data.flutter_uid,
+        gender="M",              # Valor por defecto hasta el Onboarding
+        weight=0.0,
+        height=0.0,
+        activity_level="Sedentario",
+        goal="Mantener peso",
+        medical_conditions=[],
+        assigned_nutri_id=data.assigned_nutri_id,
+        assigned_coach_id=data.assigned_coach_id,
+        is_profile_complete=False,
+    )
+    db.add(nuevo)
+    db.commit()
+    db.refresh(nuevo)
+    return {"id": nuevo.id, "email": nuevo.email, "is_profile_complete": False}
+
+
 
 
 @router.post("/registrar")
@@ -169,7 +213,6 @@ def obtener_perfil_cliente(
     print(f"✅ Activity Level: {current_user.activity_level}")
     print(f"✅ Goal: {current_user.goal}")
     
-    # Crear respuesta manualmente manejando valores None
     perfil_response = ClientResponse(
         id=current_user.id,
         first_name=current_user.first_name or "",
@@ -180,10 +223,13 @@ def obtener_perfil_cliente(
         birth_date=current_user.birth_date,
         weight=current_user.weight or 0.0,
         height=current_user.height or 0.0,
+        activity_level=current_user.activity_level or "Sedentario",
+        goal=current_user.goal or "Mantener peso",
         medical_conditions=current_user.medical_conditions or [],
         assigned_coach_id=current_user.assigned_coach_id,
         assigned_nutri_id=current_user.assigned_nutri_id,
-        profile_picture_url=current_user.profile_picture_url # ✅ Añadido
+        profile_picture_url=current_user.profile_picture_url,
+        is_profile_complete=current_user.is_profile_complete
     )
     return perfil_response
 

@@ -11,6 +11,8 @@ class Settings:
     SECRET_KEY: str = os.getenv("SECRET_KEY", "TU_CLAVE_PARA_LEY_29733")
     ALGORITHM: str = os.getenv("ALGORITHM", "HS256")
     GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+    FATSECRET_CLIENT_ID: str = os.getenv("FATSECRET_CLIENT_ID", "")
+    FATSECRET_CLIENT_SECRET: str = os.getenv("FATSECRET_CLIENT_SECRET", "")
     DEBUG: bool = os.getenv("DEBUG", "True").lower() == "true"
     
     # Email Configuration (Resend)

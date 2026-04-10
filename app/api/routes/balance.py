@@ -6,18 +6,21 @@ from app.models.client import Client
 from app.models.historial import ProgresoCalorias
 from app.models.nutricion import PlanNutricional, PlanDiario
 from datetime import datetime, date
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+from fastapi import Query
 
 router = APIRouter()
 
 
 @router.get("/hoy")
 async def obtener_balance_hoy(
+    fecha: Optional[str] = Query(None, description="Fecha opcional YYYY-MM-DD para historial"),
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """
-    📊 MI BALANCE DIARIO: Ver todos los registros de hoy
+    📊 MI BALANCE DIARIO: Ver todos los registros de una fecha
+
     
     Devuelve:
     - Resumen de calorías (consumidas, quemadas, restantes)
@@ -58,7 +61,7 @@ async def obtener_balance_hoy(
     else:
         # 🆕 FALLBACK IA (Lógica Dashboard): Calcular si no hay plan
         from app.services.ia_service import ia_engine
-        from datetime import date
+        
         genero_map = {"M": 1, "F": 2}
         genero = genero_map.get(cliente.gender, 1)
         edad = (date.today().year - cliente.birth_date.year) if cliente.birth_date else 25
@@ -75,7 +78,14 @@ async def obtener_balance_hoy(
     # Obtener progreso de hoy
     
     from app.core.utils import get_peru_date
-    hoy = get_peru_date()
+    if fecha:
+        try:
+            hoy = date.fromisoformat(fecha)
+        except ValueError:
+            hoy = get_peru_date()
+    else:
+        hoy = get_peru_date()
+        
     progreso_hoy = db.query(ProgresoCalorias).filter(
         ProgresoCalorias.client_id == cliente.id,
         ProgresoCalorias.fecha == hoy

@@ -17,34 +17,76 @@ def get_peru_date() -> date:
 
 def parsear_macros_de_texto(macros_str: str) -> Optional[Dict[str, float]]:
     """
-    Parsea string de macros tipo "P: 30g | C: 20g | G: 10g | Cal: 380kcal"
-    a dict { proteinas_g, carbohidratos_g, grasas_g, calorias }.
+    Parsea string de macros en múltiples formatos que el LLM puede generar:
+      - "P: 30g | C: 20g | G: 10g | Cal: 380kcal"
+      - "653 kcal, 51g de proteína, 28g de grasa y 40g de carbohidratos"
+      - "380 kcal | prot: 35g | carb: 45g | gras: 12g"
+      - "Calorías: 500 | Proteínas: 40g | Carbohidratos: 50g | Grasas: 15g"
     """
     if not macros_str or not macros_str.strip():
         return None
     s = macros_str.strip()
-    # P / Proteína, C / Carbo, G / Grasa, Cal / Calorías
-    p = re.search(r'P:\s*([\d.,]+)', s, re.IGNORECASE)
-    c = re.search(r'C:\s*([\d.,]+)', s, re.IGNORECASE)
-    g = re.search(r'G:\s*([\d.,]+)', s, re.IGNORECASE)
-    cal = re.search(r'Cal:\s*([\d.,]+)', s, re.IGNORECASE)
-    if not cal:  # alternativas
-        cal = re.search(r'Calor[ií]as?:\s*([\d.,]+)', s, re.IGNORECASE)
-    if not cal:
-        cal = re.search(r'(\d+)\s*kcal', s, re.IGNORECASE)
+
+    # ── Calorías ────────────────────────────────────────────────────
+    cal = (
+        re.search(r'Cal(?:or[ií]as?)?:\s*([\d.,]+)', s, re.IGNORECASE) or
+        re.search(r'([\d.,]+)\s*kcal', s, re.IGNORECASE) or
+        re.search(r'([\d.,]+)\s*cal\b', s, re.IGNORECASE)
+    )
+
+    # ── Proteínas ───────────────────────────────────────────────────
+    p = (
+        re.search(r'P(?:rot(?:eína?s?)?)?\s*:\s*([\d.,]+)', s, re.IGNORECASE) or
+        re.search(r'([\d.,]+)\s*g\s*(?:de\s+)?prot(?:eína?s?)?', s, re.IGNORECASE) or
+        re.search(r'prot(?:eína?s?)?\s*[:\-]\s*([\d.,]+)', s, re.IGNORECASE) or
+        re.search(r'prot(?:eína?s?)?\s+([\d.,]+)\s*g', s, re.IGNORECASE)
+    )
+
+    # ── Carbohidratos ────────────────────────────────────────────────
+    c = (
+        re.search(r'C(?:arb(?:ohidrat[eo]s?)?)?\s*:\s*([\d.,]+)', s, re.IGNORECASE) or
+        re.search(r'([\d.,]+)\s*g\s*(?:de\s+)?carb(?:ohidrat[eo]s?)?', s, re.IGNORECASE) or
+        re.search(r'carb(?:ohidrat[eo]s?)?\s*[:\-]\s*([\d.,]+)', s, re.IGNORECASE) or
+        re.search(r'carb(?:ohidrat[eo]s?)?\s+([\d.,]+)\s*g', s, re.IGNORECASE)
+    )
+
+    # ── Grasas ───────────────────────────────────────────────────────
+    g = (
+        re.search(r'G(?:ras(?:as?)?)?\s*:\s*([\d.,]+)', s, re.IGNORECASE) or
+        re.search(r'([\d.,]+)\s*g\s*(?:de\s+)?gras(?:as?)?', s, re.IGNORECASE) or
+        re.search(r'gras(?:as?)?\s*[:\-]\s*([\d.,]+)', s, re.IGNORECASE) or
+        re.search(r'gras(?:as?)?\s+([\d.,]+)\s*g', s, re.IGNORECASE)
+    )
+
     try:
         def to_float(m):
             if m is None:
                 return 0.0
             return float(m.group(1).replace(',', '.'))
+
+        cal_val  = to_float(cal)
+        prot_val = to_float(p)
+        carb_val = to_float(c)
+        gras_val = to_float(g)
+
+        # Si solo tenemos calorías, estimar macros proporcionales (30/40/30)
+        if cal_val > 0 and prot_val == 0 and carb_val == 0 and gras_val == 0:
+            prot_val = round(cal_val * 0.30 / 4, 1)
+            carb_val = round(cal_val * 0.40 / 4, 1)
+            gras_val = round(cal_val * 0.30 / 9, 1)
+
+        if cal_val == 0 and prot_val == 0:
+            return None
+
         return {
-            "proteinas_g": to_float(p),
-            "carbohidratos_g": to_float(c),
-            "grasas_g": to_float(g),
-            "calorias": to_float(cal),
+            "proteinas_g":    prot_val,
+            "carbohidratos_g": carb_val,
+            "grasas_g":       gras_val,
+            "calorias":       cal_val,
         }
     except (ValueError, AttributeError):
         return None
+
 
 def calcular_metabolismo_basal(cliente) -> float:
     """
@@ -84,13 +126,13 @@ def obtener_macros_desglosados(calorias: float, objetivo: str = "Mantener peso")
     Calcula desglose de macros basado en calorías y objetivo.
     Sincronizado con CalculadorDietaAutomatica (30/40/30).
     """
-    # Ajustar según objetivo si es necesario (ya las calorías deberían venir ajustadas, 
-    # pero aquí calculamos los gramos)
+    # Ajustar según objetivo
+    obj_lower = objetivo.lower()
     pct_p, pct_c, pct_g = 0.30, 0.40, 0.30
     
-    if objetivo == "Ganar masa":
+    if "ganar" in obj_lower: # ganar masa o ganar_leve
         pct_p, pct_c, pct_g = 0.25, 0.50, 0.25
-    elif objetivo == "Perder peso":
+    elif "perder" in obj_lower: # perder peso o perder_leve
         pct_p, pct_c, pct_g = 0.35, 0.35, 0.30
 
     proteinas_g = (calorias * pct_p) / 4
