@@ -14,6 +14,18 @@ from app.api.routes.websockets import router as websocket_router
 
 Base.metadata.create_all(bind=engine) 
 
+# ✅ MIGRACIONES MANUALES: Columnas añadidas post-creación inicial
+from sqlalchemy import text
+with engine.connect() as connection:
+    try:
+        connection.execute(text("ALTER TABLE clients ADD COLUMN IF NOT EXISTS dni VARCHAR UNIQUE;"))
+        connection.execute(text("ALTER TABLE clients ADD COLUMN IF NOT EXISTS workout_type VARCHAR DEFAULT 'Cardio';"))
+        connection.execute(text("ALTER TABLE clients ADD COLUMN IF NOT EXISTS session_duration FLOAT DEFAULT 1.0;"))
+        connection.commit()
+        print("✅ Migraciones manuales aplicadas correctamente.")
+    except Exception as e:
+        print(f"⚠️ Error en migración manual: {e}")
+
 app = FastAPI(title="CaloFit - Gimnasio World Light API")
 
 app.add_middleware(

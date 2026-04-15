@@ -231,6 +231,104 @@ REGLAS INFLEXIBLES:
 {f'COMANDO DEL CLIENTE: {comando_texto}' if comando_texto else ''}"""
         return await self._llamar_groq(prompt)
 
+    async def sugerir_guia_estrategica(self, perfil_usuario: Dict, alertas_salud: Optional[List[Dict]] = None) -> Dict:
+        """
+        Genera una guía estratégica mensual para el Nutricionista.
+        Respuesta estable para frontend:
+          - ai_strategic_focus: str
+          - recommended_foods: List[str]
+          - forbidden_foods: List[str]
+        """
+        alertas_salud = alertas_salud or []
+        condiciones = perfil_usuario.get("medical_conditions") or []
+        objetivo = str(perfil_usuario.get("goal", "mantener")).lower()
+
+        # Fallback determinístico si no hay LLM disponible.
+        fallback_focus = "Control nutricional y adherencia sostenida"
+        if "perder" in objetivo:
+            fallback_focus = "Déficit calórico moderado con alta saciedad"
+        elif "ganar" in objetivo:
+            fallback_focus = "Superávit controlado y ganancia muscular limpia"
+
+        recommended_default = ["Pollo", "Pescado", "Huevo", "Quinua", "Avena", "Verduras", "Frutas enteras"]
+        forbidden_default = ["Bebidas azucaradas", "Frituras", "Ultraprocesados", "Alcohol excesivo"]
+
+        if any("diabetes" in str(c).lower() for c in condiciones):
+            forbidden_default.extend(["Jugos azucarados", "Postres con azúcar refinada"])
+        if any("hipert" in str(c).lower() for c in condiciones):
+            forbidden_default.append("Snacks altos en sodio")
+
+        # Sanitiza duplicados conservando orden.
+        forbidden_default = list(dict.fromkeys(forbidden_default))
+
+        if not self.groq_client:
+            return {
+                "ai_strategic_focus": fallback_focus,
+                "recommended_foods": recommended_default[:8],
+                "forbidden_foods": forbidden_default[:8],
+            }
+
+        alertas_txt = "; ".join(
+            [f"{a.get('tipo', 'N/A')}: {a.get('descripcion', '')} (sev={a.get('severidad', 'N/A')})" for a in alertas_salud]
+        ) or "Sin alertas relevantes recientes"
+        cond_txt = ", ".join([str(c) for c in condiciones]) if condiciones else "Ninguna"
+        peso_hist = perfil_usuario.get("weight_history") or []
+        peso_hist_txt = ", ".join([f"{h.get('valor')}kg" for h in peso_hist[-6:]]) if peso_hist else "Sin historial"
+
+        prompt = f"""Eres un nutricionista clínico experto. Debes responder SOLO JSON válido.
+Perfil:
+- Nombre: {perfil_usuario.get('full_name', 'Paciente')}
+- Sexo: {perfil_usuario.get('gender', 'N/A')}
+- Edad: {perfil_usuario.get('age', 'N/A')}
+- Peso actual: {perfil_usuario.get('current_weight', 'N/A')} kg
+- Talla: {perfil_usuario.get('current_height', 'N/A')} cm
+- IMC: {perfil_usuario.get('imc', 'N/A')}
+- Actividad: {perfil_usuario.get('activity_level', 'N/A')}
+- Objetivo: {perfil_usuario.get('goal', 'N/A')}
+- Condiciones médicas: {cond_txt}
+- Historial de peso reciente: {peso_hist_txt}
+- Alertas de salud (15 días): {alertas_txt}
+
+Devuelve exactamente este esquema:
+{{
+  "ai_strategic_focus": "frase breve y accionable",
+  "recommended_foods": ["alimento1", "alimento2", "alimento3", "alimento4", "alimento5"],
+  "forbidden_foods": ["alimento1", "alimento2", "alimento3", "alimento4", "alimento5"]
+}}
+
+Reglas:
+1) Usa alimentos comunes en Perú.
+2) Si hay condiciones médicas, ajusta recomendaciones y restricciones.
+3) No uses markdown, no agregues texto fuera del JSON.
+"""
+        raw = await self._llamar_groq(prompt, max_tokens=400, temp=0.3)
+        try:
+            m = re.search(r"\{.*\}", raw, re.DOTALL)
+            parsed = json.loads(m.group()) if m else json.loads(raw)
+            focus = str(parsed.get("ai_strategic_focus", fallback_focus)).strip() or fallback_focus
+            rec = parsed.get("recommended_foods", recommended_default)
+            forb = parsed.get("forbidden_foods", forbidden_default)
+
+            if not isinstance(rec, list): rec = recommended_default
+            if not isinstance(forb, list): forb = forbidden_default
+            rec = [str(x).strip() for x in rec if str(x).strip()]
+            forb = [str(x).strip() for x in forb if str(x).strip()]
+
+            # Salida con tamaño y contenido predecible para el frontend.
+            if not rec: rec = recommended_default
+            if not forb: forb = forbidden_default
+            return {
+                "ai_strategic_focus": focus,
+                "recommended_foods": list(dict.fromkeys(rec))[:8],
+                "forbidden_foods": list(dict.fromkeys(forb))[:8],
+            }
+        except Exception:
+            return {
+                "ai_strategic_focus": fallback_focus,
+                "recommended_foods": recommended_default[:8],
+                "forbidden_foods": forbidden_default[:8],
+            }
+
     # ══════════════════════════════════════════════════════════════════
     # NLP — IDENTIFICACIÓN DE INTENCIONES
     # ══════════════════════════════════════════════════════════════════

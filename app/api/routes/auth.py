@@ -19,29 +19,50 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 async def login(credentials: UserLogin, db: Session = Depends(get_db)):
     print(f"🔐 Intento de login: {credentials.email}")
 
-    # 1️⃣ Determinar el tipo de usuario (Prioridad: Petición explícita > Detección Firebase)
+    # 1️⃣ Determinar el tipo de usuario
     requested_type = (credentials.user_type or "").strip().lower()
     has_firebase = bool(credentials.firebase_uid and credentials.firebase_uid.strip())
-    
+
     print(f"📥 REQUEST DEBUG: type_req='{requested_type}', has_firebase={has_firebase}")
 
-    if requested_type == "client" or has_firebase:
+    user = None
+    user_type = "client"
+
+    # Modo unificado: el backend resuelve cliente vs staff por email (sin pestañas en la app)
+    if requested_type in ("auto", "unified", ""):
+        if has_firebase:
+            user_type = "client"
+            print("🎯 MODO AUTO: CLIENTE (hay Firebase UID)")
+            user = db.query(Client).filter(Client.email == credentials.email).first()
+        else:
+            print("🎯 MODO AUTO: buscando primero en Client, luego en User (staff)")
+            user = db.query(Client).filter(Client.email == credentials.email).first()
+            if user:
+                user_type = "client"
+            else:
+                user = db.query(User).filter(User.email == credentials.email).first()
+                if not user and "@worldlight.com" in credentials.email:
+                    alias = credentials.email.split("@")[0].strip().lower()
+                    user = db.query(User).filter(User.email == alias).first()
+                    if user:
+                        print(f"✅ Staff encontrado por alias: {alias}")
+                if user:
+                    user_type = "staff"
+    elif requested_type == "client" or has_firebase:
         user_type = "client"
         print(f"🎯 MODO ELEGIDO: CLIENTE (Motivo: {'Tab Cliente' if requested_type == 'client' else 'Firebase UID'})")
         user = db.query(Client).filter(Client.email == credentials.email).first()
     else:
-        # Se asume STAFF solo si el tab es personal y no hay UID de Firebase
         user_type = "staff"
-        print(f"👥 MODO ELEGIDO: STAFF")
+        print("👥 MODO ELEGIDO: STAFF (explícito)")
         user = db.query(User).filter(User.email == credentials.email).first()
-        
-        # Fallback de alias corporativo para staff
+
         if not user and "@worldlight.com" in credentials.email:
             alias = credentials.email.split("@")[0].strip().lower()
             user = db.query(User).filter(User.email == alias).first()
             if user:
                 print(f"✅ Staff encontrado por alias: {alias}")
-    
+
     if not user:
         print(f"❌ Usuario no encontrado: {credentials.email} (Tipo buscado: {user_type})")
         raise HTTPException(status_code=401, detail="Correo o contraseña incorrectos")
@@ -79,6 +100,11 @@ async def login(credentials: UserLogin, db: Session = Depends(get_db)):
             user.flutter_uid = credentials.firebase_uid
             db.commit()
 
+    # 3.5️⃣ Verificación de Onboarding Forzoso de Nutrición (Flujo Express)
+    is_profile_complete = getattr(user, 'is_profile_complete', True)
+    if user_type == "client" and not is_profile_complete:
+        print(f"⚠️ AVISO (EXPRESS): El perfil de {user.email} está incompleto. Se permite login para onboarding.")
+
     # 4️⃣ Generación del Token (Igual a tu código)
     expires_delta = timedelta(days=30) if credentials.remember_me else timedelta(hours=24)
     access_token = security.create_access_token(
@@ -97,12 +123,13 @@ async def login(credentials: UserLogin, db: Session = Depends(get_db)):
         "firebase_uid": user.flutter_uid if hasattr(user, 'flutter_uid') else None,
         "user_info": {
             "name": user.first_name,
-            "last_name": user.last_name_paternal,
+            "last_name": getattr(user, 'last_name_paternal', ''),
             "email": user.email,
             "type": user_type,
             "id": user.id,
             "role": getattr(user, 'role_name', 'client') if user_type == "staff" else None,
-            "profile_picture_url": user.profile_picture_url,
+            "profile_picture_url": getattr(user, 'profile_picture_url', None),
+            "is_profile_complete": is_profile_complete,
         },
     }
     print(f"📦 Respuesta de login: {response_data}")
@@ -391,6 +418,41 @@ async def sync_password_from_firebase(
             status_code=500,
             detail=f"Error sincronizando contraseña: {str(e)}"
         )
+
+
+from app.schemas.client import ChangePassword
+
+# ... (otras rutas)
+
+@router.post("/change-password")
+async def change_password(
+    data: ChangePassword,
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Actualiza la contraseña del usuario actual en BD local y Firebase.
+    """
+    print(f"🔐 Cambiando contraseña para: {current_user.email}")
+    
+    if data.new_password != data.confirm_password:
+        raise HTTPException(status_code=400, detail="Las contraseñas no coinciden")
+    
+    # Sincronizar con Firebase si tiene UID
+    flutter_uid = getattr(current_user, 'flutter_uid', None)
+    if flutter_uid:
+        try:
+            from app.core.firebase import auth as firebase_admin_auth
+            firebase_admin_auth.update_user(flutter_uid, password=data.new_password)
+            print(f"✅ Firebase Password Sync OK")
+        except Exception as e:
+            print(f"⚠️ Error sincronizando con Firebase: {e}")
+            # Continuamos para que al menos la DB local se actualice
+
+    current_user.hashed_password = security.hash_password(data.new_password)
+    db.commit()
+    
+    return {"message": "Contraseña actualizada correctamente"}
 
 
 @router.post("/verify-and-sync-password")

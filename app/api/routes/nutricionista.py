@@ -12,6 +12,8 @@ from app.schemas.nutricion import PlanNutricionalResponse, PlanNutricionalUpdate
 from app.schemas.client import StrategicGuideUpdate
 from datetime import datetime, timedelta
 from app.core.utils import calcular_metabolismo_basal, obtener_macros_desglosados
+from app.schemas.client import StrategicGuideUpdate, ClientExpressCreate
+from app.core.security import security
 
 router = APIRouter()
 
@@ -48,6 +50,84 @@ def calcular_progreso_paciente(client: Client) -> float:
         # Mantener: Estabilidad (variación < 1kg es 100%)
         variacion = abs(peso_actual - peso_inicial)
         return max(0.0, 100.0 - (variacion * 5))
+
+@router.post("/clientes/express")
+def create_express_patient(
+    client_data: ClientExpressCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Crea un paciente de forma rápida ('Express') usando solo Correo y DNI.
+    El DNI servirá como clave temporal y el usuario quedará Incompleto.
+    """
+    check_is_nutri(current_user)
+    
+    # 1. Comprobar si el correo ya existe en la Base de Datos Local
+    existing_user = db.query(Client).filter(Client.email == client_data.email).first()
+    if existing_user:
+        raise HTTPException(
+            status_code=400, 
+            detail="Este correo electrónico ya está registrado como paciente en el sistema."
+        )
+
+    # 2. Generar el usuario incompleto y vincular con Firebase
+    try:
+        # Importación rápida para evitar dependencias circulares
+        from app.core.firebase import auth as firebase_admin_auth
+        
+        fb_user = firebase_admin_auth.create_user(
+            email=client_data.email,
+            password=client_data.dni,
+            display_name="Paciente CaloFit"
+        )
+        flutter_uid = fb_user.uid
+        print(f"✅ Usuario Firebase creado exitosamente para express: {flutter_uid}")
+        
+    except Exception as e:
+        error_msg = str(e)
+        print(f"❌ Error al crear usuario en Firebase: {error_msg}")
+        
+        # Validación Estricta: Si ya existe en la base de datos central de Firebase
+        if "EMAIL_EXISTS" in error_msg:
+            raise HTTPException(
+                status_code=400, 
+                detail="Este correo electrónico ya está registrado en los servidores de CaloFit."
+            )
+        else:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Error validando la cuenta: {error_msg}"
+            )
+
+    # 3. Guardar en Base de Datos
+    hashed_dni = security.hash_password(client_data.dni)
+    
+    nuevo_paciente = Client(
+        email=client_data.email,
+        dni=client_data.dni, # 🆕 Guardamos el DNI para identificación
+        first_name="", 
+        last_name_paternal="", 
+        last_name_maternal="",
+        hashed_password=hashed_dni,
+        flutter_uid=flutter_uid, # Guardamos el ID de Firebase!
+        is_profile_complete=False,
+        assigned_nutri_id=current_user.id
+    )
+    
+    db.add(nuevo_paciente)
+    db.commit()
+    db.refresh(nuevo_paciente)
+
+    # 4. Enviar Correo de Credenciales vía Brevo
+    from app.services.email_service import EmailService
+    EmailService.send_welcome_credentials_brevo(
+        email_to=client_data.email,
+        dni=client_data.dni,
+        nutricionista_name=current_user.first_name
+    )
+    
+    return {"message": "Paciente Express creado exitosamente.", "client_id": nuevo_paciente.id}
 
 @router.get("/clientes", response_model=List[dict])
 def get_assigned_patients(
@@ -94,42 +174,49 @@ def get_assigned_patients(
             "alerta_nivel": alerta_data.get("nivel", "Bajo"),
             "gender": c.gender,
             "is_validated": c.is_strategic_guide_validated,
-            "semana_status": _calcular_semana_status(c, db) # ✅ Nuevo: Estado semántico para el nutri
+            "is_profile_complete": c.is_profile_complete, # 🆕 CRÍTICO: Indica si es registro express
+            "dni": c.dni, # 🆕 Necesario para identificar pendientes
+            "semana_status": _calcular_mes_status(c, db)
         })
     
     return result
 
-def _calcular_semana_status(c: Client, db: Session) -> str:
+def _calcular_mes_status(c: Client, db: Session) -> str:
     """
-    Determina el estado de la semana del paciente:
-    - 'validado': Plan aprobado después del último sábado.
-    - 'pendiente': Hizo check-in pero falta validación.
-    - 'falta_checkin': No ha registrado peso desde el último sábado.
+    Determina el estado del mes del paciente:
+    - 'validado': Último plan aprobado por nutricionista.
+    - 'pendiente': Existe plan, aún sin validación.
+    - 'falta_checkin': No hay check-in mensual y tampoco plan activo.
+
+    Nota de flujo:
+    El check-in es mensual, pero la revisión por nutricionista puede ser semanal/quincenal.
+    Por eso la validación del plan no se bloquea por falta de check-in.
     """
     from app.core.utils import get_peru_now
     now = get_peru_now()
-    # Encontrar el último sábado (o hoy si es sábado)
-    # weekday(): 0=Mon, 5=Sat, 6=Sun
-    days_since_sat = (now.weekday() - 5) % 7
-    last_saturday = (now - timedelta(days=days_since_sat)).date()
-    
-    # 1. ¿Hizo check-in (registró peso) desde el último sábado?
-    hizo_checkin = any(r.fecha_registro >= last_saturday for r in c.historial_peso)
-    
-    if not hizo_checkin:
-        return "falta_checkin"
-        
-    # 2. ¿Tiene un plan validado después de ese check-in?
-    # Buscamos el plan más reciente
+    first_of_month = now.replace(day=1).date()
+    hizo_checkin = any(r.fecha_registro >= first_of_month for r in c.historial_peso)
+
+    # 1) El estado principal depende del ciclo de plan, no del check-in.
     ultimo_plan = db.query(PlanNutricional).filter(
         PlanNutricional.client_id == c.id
     ).order_by(PlanNutricional.fecha_creacion.desc()).first()
-    
-    if ultimo_plan and ultimo_plan.status == "validado" and ultimo_plan.validated_at:
-        # Si la validación fue después del último sábado, está OK
-        if ultimo_plan.validated_at.date() >= last_saturday:
-            return "validado"
-            
+
+    if ultimo_plan and ultimo_plan.status == "validado":
+        return "validado"
+
+    if ultimo_plan:
+        return "pendiente"
+
+    # 2) Si el perfil ya está completo, debe entrar al flujo operativo de Nutri:
+    #    aparecer como pendiente de validación aunque el check-in mensual no exista.
+    if c.is_profile_complete:
+        return "pendiente"
+
+    # 3) Si aún no hay plan ni perfil completo, usamos check-in mensual como estado inicial.
+    if not hizo_checkin:
+        return "falta_checkin"
+
     return "pendiente"
 
 @router.get("/cliente/{id}/progreso")
@@ -181,7 +268,7 @@ def get_patient_progress(
         "nombre": f"{client.first_name} {client.last_name_paternal} {client.last_name_maternal}", # Adjusted to match existing full_name format
         "objetivo": client.goal,
         "focus_objetivo": client.ai_strategic_focus, # Renamed from client.focus_objetivo to client.ai_strategic_focus
-        "semana_status": _calcular_semana_status(client, db),
+        "semana_status": _calcular_mes_status(client, db),
         "historial_peso": historial_peso,
         "historial_imc": historial_imc,
         "alertas_salud": alertas,
@@ -301,20 +388,42 @@ def validate_plan(
     if not client:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
         
-    status_semana = _calcular_semana_status(client, db)
-    if status_semana == "falta_checkin":
-        raise HTTPException(
-            status_code=400, 
-            detail="No se puede validar el plan si el paciente aún no ha realizado su Check-in semanal."
-        )
-
-    # Lógica para cambiar status de plan a 'validado'
+    # La validación nutricional no depende del check-in mensual.
+    # Se valida el último plan disponible del cliente.
     plan = db.query(PlanNutricional).filter(PlanNutricional.client_id == id).order_by(PlanNutricional.fecha_creacion.desc()).first()
-    if plan:
-        plan.status = "validado"
-        plan.validated_by_id = current_user.id
-        plan.validated_at = datetime.utcnow()
-        db.commit()
+    if not plan:
+        # Flujo express: si el cliente ya está en activos pero aún no hay plan persistido,
+        # creamos uno base para permitir validación inmediata en consulta semanal/quincenal.
+        plan = PlanNutricional(
+            client_id=id,
+            genero=1 if (client.gender or "M") == "M" else 2,
+            edad=25,
+            peso=client.weight or 70.0,
+            talla=client.height or 170.0,
+            nivel_actividad=1.55,
+            objetivo=client.goal or "Mantener peso",
+            status="draft",
+            calorias_ia_base=0
+        )
+        db.add(plan)
+        db.flush()
+
+        for i in range(1, 8):
+            db.add(PlanDiario(
+                plan_id=plan.id,
+                dia_numero=i,
+                calorias_dia=0,
+                proteinas_g=0,
+                carbohidratos_g=0,
+                grasas_g=0,
+                estado="sugerencia_ia"
+            ))
+        db.flush()
+
+    plan.status = "validado"
+    plan.validated_by_id = current_user.id
+    plan.validated_at = datetime.utcnow()
+    db.commit()
     return {"message": f"Plan del cliente {id} validado correctamente por Nutricionista {current_user.first_name}"}
 
 @router.get("/cliente/{id}/plan", response_model=PlanNutricionalResponse)
@@ -332,8 +441,27 @@ def get_client_plan(
         raise HTTPException(status_code=403, detail="No tienes permiso para ver este paciente")
     
     plan = db.query(PlanNutricional).filter(PlanNutricional.client_id == id).order_by(PlanNutricional.fecha_creacion.desc()).first()
+    
     if not plan:
-        raise HTTPException(status_code=404, detail="Este paciente aún no tiene un plan nutricional asignado")
+        print(f"📡 Generando vista previa de plan para cliente nuevo {id}")
+        # Retornamos un plan vacío estructurado para que el Frontend no explote
+        return {
+            "id": 0,
+            "client_id": id,
+            "objetivo": client.goal or "Por definir",
+            "status": "draft",
+            "observaciones": "Plan inicial pendiente de configuración",
+            "detalles_diarios": [
+                {
+                    "dia_numero": i,
+                    "calorias_dia": 0,
+                    "proteinas_g": 0,
+                    "carbohidratos_g": 0,
+                    "grasas_g": 0,
+                    "estado": "pendiente"
+                } for i in range(1, 8)
+            ]
+        }
     return plan
 
 @router.put("/cliente/{id}/plan")
@@ -352,8 +480,36 @@ def update_client_plan(
         raise HTTPException(status_code=403, detail="No tienes permiso")
     
     plan = db.query(PlanNutricional).filter(PlanNutricional.client_id == id).order_by(PlanNutricional.fecha_creacion.desc()).first()
+    
     if not plan:
-        raise HTTPException(status_code=404, detail="No hay plan para actualizar")
+        print(f"✨ Creando primer plan para cliente {id} (Probablemente Express)")
+        # Crear esqueleto de plan
+        plan = PlanNutricional(
+            client_id=id,
+            genero=1 if (client.gender or "M") == "M" else 2,
+            edad=25,
+            peso=client.weight or 70.0,
+            talla=client.height or 170.0,
+            nivel_actividad=1.55,
+            objetivo=client.goal or "Mantener peso",
+            status="draft", # Empezamos en borrador
+            calorias_ia_base=0
+        )
+        db.add(plan)
+        db.flush() 
+        # Crear 7 días vacíos por defecto
+        for i in range(1, 8):
+            dia = PlanDiario(
+                plan_id=plan.id,
+                dia_numero=i,
+                calorias_dia=0,
+                proteinas_g=0,
+                carbohidratos_g=0,
+                grasas_g=0,
+                estado="sugerencia_ia"
+            )
+            db.add(dia)
+        db.flush()
     
     if plan_update.objetivo:
         plan.objetivo = plan_update.objetivo
@@ -482,3 +638,46 @@ def get_nutri_stats(
         "adherencia_media": adherencia_media,
         "tendencia_adherencia": tendencia
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  ELIMINAR CLIENTE (Firebase Auth + PostgreSQL)
+# ═══════════════════════════════════════════════════════════════════════
+@router.delete("/cliente/{id}")
+def delete_client(
+    id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Elimina permanentemente a un cliente:
+      1. Borra el usuario de Firebase Authentication (por flutter_uid).
+      2. Elimina el registro de la BD (cascade borra historial, planes, etc.).
+    Solo el Nutricionista asignado o un Admin pueden ejecutar esta acción.
+    """
+    check_is_nutri(current_user)
+
+    client = db.query(Client).filter(Client.id == id).first()
+    if not client:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado.")
+
+    # Nutricionistas solo pueden eliminar sus propios pacientes
+    if current_user.role_name.upper() in ["NUTRICIONISTA", "NUTRITIONIST"]:
+        if client.assigned_nutri_id != current_user.id:
+            raise HTTPException(status_code=403, detail="No tienes permiso para eliminar este paciente.")
+
+    # 1. Eliminar de Firebase Authentication
+    flutter_uid = client.flutter_uid
+    if flutter_uid:
+        try:
+            from firebase_admin import auth as firebase_auth
+            firebase_auth.delete_user(flutter_uid)
+            print(f"🔥 Firebase: Usuario {flutter_uid} eliminado correctamente.")
+        except Exception as e:
+            print(f"⚠️ Firebase: No se pudo eliminar el usuario ({e}). Continuando con la BD...")
+
+    # 2. Eliminar de la base de datos (cascade elimina historial, planes, alertas, etc.)
+    db.delete(client)
+    db.commit()
+
+    return {"status": "success", "message": f"Cliente ID {id} eliminado de la plataforma y Firebase."}

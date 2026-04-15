@@ -40,6 +40,8 @@ class ClientResponse(BaseModel):
     gender: Optional[str] = 'M'
     activity_level: Optional[str] = 'Sedentario'
     goal: Optional[str] = 'Mantener peso'
+    workout_type: Optional[str] = 'Cardio'        # 🆕 Para ML Random Forest
+    session_duration: Optional[float] = 1.0        # 🆕 Para ML Random Forest (en horas)
     medical_conditions: List[str] = []
     assigned_coach_id: Optional[int]
     assigned_nutri_id: Optional[int]
@@ -62,6 +64,8 @@ class ClientUpdate(BaseModel):
     medical_conditions: Optional[List[str]] = None
     activity_level: Optional[str] = None
     goal: Optional[str] = None
+    workout_type: Optional[str] = None             # 🆕 Para ML Random Forest
+    session_duration: Optional[float] = None       # 🆕 Para ML Random Forest (en horas)
     profile_picture_url: Optional[str] = None
     is_profile_complete: Optional[bool] = None  # 🆕 El onboarding lo marca como True al terminar
 
@@ -73,6 +77,12 @@ class AdminCreateClient(BaseModel):
     flutter_uid: str = Field(..., description="Firebase UID generado por el Admin al crear el usuario en Firebase")
     assigned_nutri_id: Optional[int] = None
     assigned_coach_id: Optional[int] = None
+
+class ClientExpressCreate(BaseModel):
+    """Schema para la creación B2B de un paciente solo usando DNI y Correo."""
+    email: EmailStr
+    dni: str = Field(..., min_length=7, max_length=15, description="El DNI será usado como clave temporal")
+    assigned_nutri_id: Optional[int] = None
 
 class ChangePassword(BaseModel):
     new_password: str = Field(..., min_length=6)

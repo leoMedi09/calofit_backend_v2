@@ -32,3 +32,174 @@ class EmailService:
         except Exception as e:
             print(f"Error enviando correo con Resend: {e}")
             return None
+
+    @staticmethod
+    def send_welcome_credentials_email(email_to: str, dni: str, nutricionista_name: str):
+        try:
+            params = {
+                "from": "CaloFit <onboarding@resend.dev>",
+                "to": [email_to],
+                "subject": f"¡Bienvenido a CaloFit! Tu nutricionista te ha registrado",
+                "html": f"""
+                <div style="font-family: sans-serif; max-width: 400px; margin: auto; border: 1px solid #eee; padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
+                    <div style="text-align: center; margin-bottom: 20px;">
+                        <h1 style="color: #1E88E5; margin: 0; font-size: 28px;">CaloFit</h1>
+                        <p style="color: #666; margin-top: 5px; font-size: 14px;">Tu camino a una vida saludable</p>
+                    </div>
+                    
+                    <p style="color: #333; font-size: 15px; line-height: 1.5;">¡Hola!</p>
+                    <p style="color: #333; font-size: 15px; line-height: 1.5;">
+                        Tu nutricionista <b>{nutricionista_name}</b> acaba de crear tu cuenta en nuestra plataforma premium.
+                    </p>
+                    
+                    <div style="background: #F1F5F9; border-left: 4px solid #1E88E5; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                        <p style="margin: 0 0 10px 0; color: #555; font-size: 13px; text-transform: uppercase; font-weight: bold;">TUS CREDENCIALES DE ACCESO:</p>
+                        <p style="margin: 0 0 5px 0;"><strong>Correo:</strong> {email_to}</p>
+                        <p style="margin: 0;"><strong>Contraseña temporal:</strong> {dni}</p>
+                    </div>
+                    
+                    <p style="color: #333; font-size: 15px; line-height: 1.5;">
+                        Descarga la aplicación de CaloFit e ingresa con estos datos. Cuando inicies sesión por primera vez, <b>te pediremos completar tu perfil y que cambies tu contraseña</b> por motivos de seguridad.
+                    </p>
+                    <hr style="border: none; border-top: 1px solid #eee; margin: 25px 0;">
+                    <p style="font-size: 12px; color: #999; text-align: center; margin: 0;">
+                        Este es un mensaje automático del sistema CaloFit. Por favor no respondas a este correo.
+                    </p>
+                </div>
+                """
+            }
+            email = resend.Emails.send(params)
+            print(f"✅ Correo de bienvenida enviado a {email_to}")
+            return email
+        except Exception as e:
+            print(f"❌ Error enviando correo de bienvenida con Resend: {e}")
+            return None
+
+    @staticmethod
+    def send_welcome_credentials_gmail(email_to: str, dni: str, nutricionista_name: str):
+        """
+        Envía correos gratuitos y sin restricción de dominios usando el SMTP de Gmail
+        (Requiere Contraseña de Aplicación de Google)
+        """
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+        import os
+        
+        gmail_user = os.getenv("GMAIL_SENDER")
+        gmail_password = os.getenv("GMAIL_APP_PASSWORD")
+        
+        if not gmail_user or not gmail_password:
+            print("⚠️ Faltan credenciales GMAIL_SENDER o GMAIL_APP_PASSWORD en el archivo .env")
+            return None
+
+        # Construir el Mensaje HTML premium
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = "¡Bienvenido a CaloFit! Tu nutricionista te ha registrado"
+        msg["From"] = f"CaloFit <{gmail_user}>"
+        msg["To"] = email_to
+
+        html_body = f"""
+        <div style="font-family: sans-serif; max-width: 400px; margin: auto; border: 1px solid #eee; padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
+            <div style="text-align: center; margin-bottom: 20px;">
+                <h1 style="color: #1E88E5; margin: 0; font-size: 28px;">CaloFit</h1>
+                <p style="color: #666; margin-top: 5px; font-size: 14px;">Tu camino a una vida saludable</p>
+            </div>
+            
+            <p style="color: #333; font-size: 15px; line-height: 1.5;">¡Hola!</p>
+            <p style="color: #333; font-size: 15px; line-height: 1.5;">
+                Tu nutricionista <b>{nutricionista_name}</b> acaba de crear tu cuenta en nuestra plataforma premium.
+            </p>
+            
+            <div style="background: #F1F5F9; border-left: 4px solid #1E88E5; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                <p style="margin: 0 0 10px 0; color: #555; font-size: 13px; text-transform: uppercase; font-weight: bold;">TUS CREDENCIALES DE ACCESO:</p>
+                <p style="margin: 0 0 5px 0;"><strong>Correo:</strong> {email_to}</p>
+                <p style="margin: 0;"><strong>Contraseña temporal:</strong> {dni}</p>
+            </div>
+            
+            <p style="color: #333; font-size: 15px; line-height: 1.5;">
+                Descarga la aplicación de CaloFit e ingresa con estos datos. Cuando inicies sesión por primera vez, <b>te pediremos completar tu perfil y que cambies tu contraseña</b> por motivos de seguridad.
+            </p>
+        </div>
+        """
+        
+        parte_html = MIMEText(html_body, "html")
+        msg.attach(parte_html)
+
+        try:
+            # Conectar a Gmail SMTP por el puerto 465 (Seguro SSL)
+            server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
+            server.login(gmail_user, gmail_password)
+            server.sendmail(gmail_user, email_to, msg.as_string())
+            server.quit()
+            print(f"✅ Correo de bienvenida enviado a {email_to} usando GMAIL SMTP")
+            return True
+        except Exception as e:
+            print(f"❌ Error crítico enviando correo vía Gmail: {e}")
+            return None
+
+    @staticmethod
+    def send_welcome_credentials_brevo(email_to: str, dni: str, nutricionista_name: str):
+        """
+        Envía correos gratuitos y sin restricción usando la API V3 de Brevo.
+        (Requiere BREVO_API_KEY y BREVO_SENDER en .env)
+        """
+        import requests
+        import os
+        
+        api_key = os.getenv("BREVO_API_KEY")
+        sender_email = os.getenv("BREVO_SENDER")
+        
+        if not api_key or not sender_email:
+            print("⚠️ Faltan credenciales BREVO_API_KEY o BREVO_SENDER en el archivo .env")
+            return None
+
+        url = "https://api.brevo.com/v3/smtp/email"
+        
+        headers = {
+            "accept": "application/json",
+            "api-key": api_key,
+            "content-type": "application/json"
+        }
+        
+        html_body = f"""
+        <div style="font-family: sans-serif; max-width: 400px; margin: auto; border: 1px solid #eee; padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
+            <div style="text-align: center; margin-bottom: 20px;">
+                <h1 style="color: #1E88E5; margin: 0; font-size: 28px;">CaloFit</h1>
+                <p style="color: #666; margin-top: 5px; font-size: 14px;">Tu camino a una vida saludable</p>
+            </div>
+            
+            <p style="color: #333; font-size: 15px; line-height: 1.5;">¡Hola!</p>
+            <p style="color: #333; font-size: 15px; line-height: 1.5;">
+                Tu nutricionista <b>{nutricionista_name}</b> te registró en nuestra plataforma premium.
+            </p>
+            
+            <div style="background: #F1F5F9; border-left: 4px solid #1E88E5; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                <p style="margin: 0 0 10px 0; color: #555; font-size: 13px; text-transform: uppercase; font-weight: bold;">TUS CREDENCIALES DE ACCESO:</p>
+                <p style="margin: 0 0 5px 0;"><strong>Correo:</strong> {email_to}</p>
+                <p style="margin: 0;"><strong>Contraseña temporal:</strong> {dni}</p>
+            </div>
+            
+            <p style="color: #333; font-size: 15px; line-height: 1.5;">
+                Ingresa con estos datos en la aplicación. Cuando inicies sesión por primera vez, <b>te pediremos completar tu perfil y que cambies tu contraseña</b> por motivos de seguridad.
+            </p>
+        </div>
+        """
+
+        payload = {
+            "sender": {"name": "CaloFit", "email": sender_email},
+            "to": [{"email": email_to}],
+            "subject": f"¡Bienvenido a CaloFit! {nutricionista_name} te registró",
+            "htmlContent": html_body
+        }
+
+        try:
+            response = requests.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+            print(f"✅ Correo de bienvenida enviado a {email_to} usando BREVO API")
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            print(f"❌ Error crítico enviando correo vía Brevo: {e}")
+            if e.response is not None:
+                print(f"Detalle de Brevo: {e.response.text}")
+            return None

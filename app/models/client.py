@@ -8,15 +8,21 @@ class Client(Base):
     __tablename__ = "clients"
 
     id = Column(Integer, primary_key=True, index=True)
-    first_name = Column(String, nullable=False)
-    last_name_paternal = Column(String, nullable=False)
-    last_name_maternal = Column(String, nullable=False)
+    first_name = Column(String, nullable=True)
+    last_name_paternal = Column(String, nullable=True)
+    last_name_maternal = Column(String, nullable=True)
+    dni = Column(String, unique=True, index=True, nullable=True) # 🆕 Documento de identidad (DNI)
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
+    is_profile_complete = Column(Boolean, default=True)
     
-    planes_nutricionales = relationship("PlanNutricional", back_populates="cliente")
+    planes_nutricionales = relationship(
+        "PlanNutricional",
+        back_populates="cliente",
+        cascade="all, delete-orphan",
+    )
     
-    flutter_uid = Column(String, unique=True, nullable=False, index=True)  # ✅ UID de Firebase/Flutter para vincular usuario con perfil de salud
+    flutter_uid = Column(String, unique=True, nullable=True, index=True)  # ✅ UID de Firebase/Flutter para vincular usuario con perfil de salud
     
     birth_date = Column(Date, nullable=True)  # Fecha de nacimiento
     weight = Column(Float)  # Peso actual (kg)
@@ -25,6 +31,8 @@ class Client(Base):
     medical_conditions = Column(ARRAY(String), nullable=True, default=[])
     activity_level = Column(String, nullable=True, default='Moderado')  # Nivel de actividad física: Sedentario, Ligero, Moderado, Intenso, Muy intenso
     goal = Column(String, nullable=True, default='Mantener peso')  # Objetivo principal: Perder peso, Mantener peso, Ganar masa
+    workout_type = Column(String, nullable=True, default='Cardio')  # 🆕 Tipo de ejercicio preferido (para ML Random Forest)
+    session_duration = Column(Float, nullable=True, default=1.0)   # 🆕 Duración de sesión en horas (para ML Random Forest)
     
     assigned_coach_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     assigned_nutri_id = Column(Integer, ForeignKey("users.id"), nullable=True)

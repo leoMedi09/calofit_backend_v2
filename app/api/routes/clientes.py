@@ -624,52 +624,58 @@ def obtener_perfil_por_uid(
     return perfil_response
 
 
-# ✅ NUEVO: Check-in Semanal (Sábados de Calibración)
+# ✅ Check-in Mensual
 @router.get("/checkin-status")
 def check_checkin_status(
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Verifica si el usuario necesita hacer el check-in del sábado (Perseverante)"""
+    """Verifica si el usuario necesita hacer el check-in del mes"""
     from app.core.utils import get_peru_now
     from app.models.historial import HistorialPeso
     now = get_peru_now()
-    
-    # 🕒 Encontrar el último sábado transcurrido (o hoy si es sábado)
-    # weekday(): 0=Mon, 5=Sat, 6=Sun
-    days_since_sat = (now.weekday() - 5) % 7
-    last_saturday = (now - timedelta(days=days_since_sat)).date()
-    
-    # 🔍 Verificar si ya registró peso desde el último sábado (inclusive)
+
+    # 🗓️ Primer día del mes actual (check-in mensual)
+    first_of_month = now.replace(day=1).date()
+
+    # 🆕 REGLA PARA USUARIOS NUEVOS: No pedir check-in hasta después de 30 días
+    days_since_creation = (now - current_user.created_at).days if current_user.created_at else 31
+    is_new_user = days_since_creation < 30
+
+    # 🔍 Verificar si ya registró peso este mes
     already_done = db.query(Client).filter(
         Client.id == current_user.id,
-        Client.historial_peso.any(HistorialPeso.fecha_registro >= last_saturday)
+        Client.historial_peso.any(HistorialPeso.fecha_registro >= first_of_month)
     ).first()
-    
-    # Calcular precisión basada en la última actualización real (para el meter)
+
+    # Días desde el último registro (para el medidor de precisión)
     last_record = db.query(HistorialPeso).filter(
         HistorialPeso.client_id == current_user.id
     ).order_by(HistorialPeso.fecha_registro.desc()).first()
-    
-    days_since = 30 # Default si no hay historial
+
+    days_since = 0
     if last_record:
         days_since = (now.date() - last_record.fecha_registro).days
-        
-    precision = 100
-    if days_since > 7: precision = 45
-    if days_since > 14: precision = 15
+    else:
+        days_since = days_since_creation
 
-    # El check-in es "necesario" si no se ha hecho desde el último sábado
-    # y hoy es sábado, domingo o lunes (ventana de calibración)
-    # O simplemente siempre que falte el del último sábado para máxima persistencia.
-    needed = not already_done
+    # Precisión basada en días sin actualizar (escala mensual)
+    precision = 100
+    if not is_new_user:
+        if days_since > 15: precision = 70
+        if days_since > 25: precision = 40
+        if days_since > 35: precision = 15
+    else:
+        precision = 100  # Usuarios nuevos siempre al 100% el primer mes
+
+    needed = not already_done and not is_new_user
 
     return {
         "needed": needed,
         "precision_score": precision,
         "days_since_update": days_since,
-        "last_saturday": last_saturday.strftime("%Y-%m-%d"),
-        "message": "¡Calibración pendiente!" if needed else "Plan calibrado"
+        "first_of_month": first_of_month.strftime("%Y-%m-%d"),
+        "message": "¡Calibración mensual pendiente!" if needed else ("¡Perfil al día!" if is_new_user else "Plan calibrado este mes")
     }
 
 @router.post("/checkin")

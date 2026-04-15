@@ -271,6 +271,45 @@ async def alternar_estado_staff(
         "is_active": nuevo_estado
     }
 
+@router.delete("/staff/{user_id}")
+async def eliminar_personal_staff(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Permite al administrador eliminar permanentemente a un miembro del staff.
+    """
+    check_is_admin(current_user)
+    
+    usuario = db.query(User).filter(User.id == user_id).first()
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario del staff no encontrado")
+
+    # Reasignar clientes si es necesario (opcional)
+    # Por ahora simplemente desvinculamos la clave foránea en Client
+    if usuario.role_name and "nutri" in usuario.role_name.lower():
+        clientes = db.query(Client).filter(Client.assigned_nutri_id == user_id).all()
+        for c in clientes:
+            c.assigned_nutri_id = None
+    elif usuario.role_name and ("coach" in usuario.role_name.lower() or "train" in usuario.role_name.lower()):
+        clientes = db.query(Client).filter(Client.assigned_coach_id == user_id).all()
+        for c in clientes:
+            c.assigned_coach_id = None
+
+    nombre_baja = f"{usuario.first_name} ({usuario.email})"
+
+    db.delete(usuario)
+    db.commit()
+    
+    _log_admin_action(
+        db, current_user.id, "PERSONAL_ELIMINADO", 
+        f"Se eliminó permanentemente la cuenta de {nombre_baja}",
+        "users", None
+    )
+    
+    return {"message": f"Personal eliminado correctamente"}
+
 @router.get("/logs")
 async def listar_logs_admin(
     db: Session = Depends(get_db),

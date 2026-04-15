@@ -142,23 +142,17 @@ df["Height_cm"]   = df["Height (m)"] * 100
 print("  ✅ Height convertida de metros a cm (compatibilidad con app)")
 
 # 3.5 Seleccionar features finales
-#     NOTA: Estas son las features que el Asistente también puede calcular
-#     con datos reales del cliente desde la BD.
+#     NOTA: Estas son exclusivamente las features que obtenemos en la App real
+#     garantizando consistencia absoluta con la base de datos (Tabla clients).
 FEATURES = [
     "Age",                              # Edad del cliente
     "Gender_Enc",                       # Género (0=F, 1=M)
     "Weight (kg)",                      # Peso
     "Height_cm",                        # Estatura en cm
-    "BMI",                              # IMC
-    "Workout_Frequency (days/week)",    # ★ Feature más importante
-    "Session_Duration (hours)",         # Compromiso en sesión
-    "Calories_Burned",                  # Eficiencia calórica
-    "Cal_por_hora",                     # Feature derivado
-    "Fat_Percentage",                   # % grasa corporal
-    "Water_Intake (liters)",            # Hábitos saludables
-    "Avg_BPM",                          # Intensidad del entrenamiento
-    "Resting_BPM",                      # Salud cardiovascular en reposo
-] + workout_cols                        # Tipo de entrenamiento preferido
+    "BMI",                              # IMC calculado
+    "Workout_Frequency (days/week)",    # Mapeado desde 'activity_level'
+    "Session_Duration (hours)",         # Duración de sesión (nueva pregunta onboarding)
+] + workout_cols                        # Tipo de entrenamiento preferido (nueva pregunta onboarding)
 
 TARGET = "Experience_Level"
 
@@ -337,6 +331,11 @@ class ModeloPerfil:
             wt_data[wt_col] = 1
 
         # Construir fila de entrada
+        wt_data  = {col: 0 for col in self.workout_types}
+        wt_col   = f"Workout_{datos.get('workout_type', '')}"
+        if wt_col in wt_data:
+            wt_data[wt_col] = 1
+
         row = {
             "Age":                             float(datos.get("age", 30)),
             "Gender_Enc":                      gender_enc,
@@ -344,14 +343,8 @@ class ModeloPerfil:
             "Height_cm":                       height_cm,
             "BMI":                             round(bmi, 2),
             "Workout_Frequency (days/week)":   float(datos.get("workout_freq", 3)),
-            "Session_Duration (hours)":        float(datos.get("session_hours", 1)),
-            "Calories_Burned":                 cal,
-            "Cal_por_hora":                    cal_hora,
-            "Fat_Percentage":                  float(datos.get("fat_pct", 25)),
-            "Water_Intake (liters)":           float(datos.get("water", 2)),
-            "Avg_BPM":                         float(datos.get("avg_bpm", 140)),
-            "Resting_BPM":                     float(datos.get("resting_bpm", 60)),
-            **wt_data
+            "Session_Duration (hours)":        float(datos.get("session_hours", 1.0)),
+            **wt_data,
         }
 
         df_input = pd.DataFrame([row])[self.features]
@@ -361,18 +354,17 @@ class ModeloPerfil:
 
         return self.label_map[pred], confianza
 
-    def predecir_simple(self, workout_freq, session_hours, calories,
-                        fat_pct=25.0, water=2.0, age=30, gender="M",
-                        weight=70.0, height=170.0) -> str:
+    def predecir_simple(self, workout_freq, session_hours=1.0,
+                        age=30, gender="M",
+                        weight=70.0, height=170.0,
+                        workout_type="") -> str:
         """
-        Versión simplificada con solo las variables más accesibles.
-        Útil cuando el cliente recién se registra y hay pocos datos.
+        Versión simplificada con las variables del Onboarding de la App.
         """
         datos = {
             "age": age, "gender": gender, "weight": weight, "height": height,
             "workout_freq": workout_freq, "session_hours": session_hours,
-            "calories": calories, "fat_pct": fat_pct, "water": water,
-            "avg_bpm": 140, "resting_bpm": 65, "workout_type": ""
+            "workout_type": workout_type
         }
         return self.predecir_cliente(datos)
 
