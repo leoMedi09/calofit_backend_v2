@@ -19,6 +19,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    return
     """Upgrade schema - Create password_resets table."""
     op.create_table(
         'password_resets',

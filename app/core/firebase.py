@@ -30,9 +30,10 @@ def initialize_firebase():
             firebase_admin.initialize_app(cred)
             
     except Exception as e:
-        print(f"❌ Error crítico en Firebase: {e}")
+        # print(f"❌ Error crítico en Firebase: {e}")
+        print("Ignorando Firebase temporalmente para desarrollo local") # <--- AGREGA ESTO
         # En producción, esto debería detener la app
-        raise e
+        # raise e
 
 # Ejecutamos la inicialización al importar el módulo
 initialize_firebase()
