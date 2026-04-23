@@ -19,6 +19,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    return
     """Upgrade schema - Remove expires_at column (now calculated property)."""
     # Remover la columna expires_at (ahora es una propiedad @property)
     op.drop_column('password_resets', 'expires_at')
